@@ -405,7 +405,7 @@ class CameraMover:
 
         # Make sure save path directory exists, and then save the image to that location
         Path(Path(fpath).parent).mkdir(parents=True, exist_ok=True)
-        Image.fromarray(self.get_image()).save(fpath)
+        Image.fromarray(self.get_image().cpu().numpy()).save(fpath)
         og.log.info(f"Saved current viewer camera image to {fpath}.")
 
     def record_trajectory(self, poses, fps, steps_per_frame=1, fpath=None):
@@ -438,7 +438,7 @@ class CameraMover:
             self.cam.set_position_orientation(position=pos, orientation=quat)
             og.sim.step()
             if i % steps_per_frame == 0:
-                video_writer.append_data(self.get_image())
+                video_writer.append_data(self.get_image().cpu().numpy())
 
         # Close writer
         video_writer.close()
