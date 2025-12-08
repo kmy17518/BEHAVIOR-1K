@@ -470,7 +470,7 @@ class CameraMover:
 
         # Function help get arc derivative
         def arc_derivative(u):
-            return th.sqrt(th.sum([dspline(u) ** 2 for dspline in dsplines]))
+            return math.sqrt(sum(dspline(u) ** 2 for dspline in dsplines))
 
         # Function to help get interpolated positions
         def get_interpolated_positions(step):
@@ -480,7 +480,7 @@ class CameraMover:
             interpolated_points = th.zeros((path_length, 3))
             for i in range(path_length):
                 curr_step = step + (i / path_length)
-                interpolated_points[i, :] = th.tensor([spline(curr_step) for spline in splines])
+                interpolated_points[i, :] = th.tensor([float(spline(curr_step)) for spline in splines])
             return interpolated_points
 
         # Iterate over all waypoints and infer the resulting trajectory, recording the resulting poses
@@ -497,7 +497,7 @@ class CameraMover:
                 pan_angle = th.arctan2(-xy_direction[0], xy_direction[1])
                 tilt_angle = th.arcsin(z)
                 # Infer global quat orientation from these angles
-                quat = T.euler2quat([math.pi / 2 + tilt_angle, 0.0, pan_angle])
+                quat = T.euler2quat(th.tensor([math.pi / 2 + tilt_angle.item(), 0.0, pan_angle.item()]))
                 poses.append([positions[j], quat])
 
         # Record the generated trajectory
