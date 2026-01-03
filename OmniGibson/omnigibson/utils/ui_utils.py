@@ -624,6 +624,7 @@ class KeyboardRobotController:
         self.keypress_mapping = None  # Maps omni keybindings to information for controlling various parts of the robot
         self.current_keypress = None  # Current key that is being pressed
         self.active_action = None  # Current action information based on the current keypress
+        self._pending_release = False  # Whether a key release is pending (to handle batched events)
         self.toggling_gripper = False  # Whether we should toggle the gripper during the next action
         self.custom_keymapping = None  # Dictionary mapping custom keys to custom callback functions / info
 
@@ -640,7 +641,7 @@ class KeyboardRobotController:
         appwindow = lazy.omni.appwindow.get_default_app_window()
         input_interface = lazy.carb.input.acquire_input_interface()
         keyboard = appwindow.get_keyboard()
-        input_interface.subscribe_to_keyboard_events(keyboard, self.keyboard_event_handler)
+        self._keyboard_sub = input_interface.subscribe_to_keyboard_events(keyboard, self.keyboard_event_handler)
 
     def register_custom_keymapping(self, key, description, callback_fn):
         """
@@ -837,10 +838,9 @@ class KeyboardRobotController:
                 if event.input == lazy.carb.input.KeyboardInput.T:
                     self.toggling_gripper = True
 
-        # If we release a key, clear the active action and keypress
+        # If we release a key, mark release as pending (don't clear immediately to handle batched events)
         elif event.type == lazy.carb.input.KeyboardEventType.KEY_RELEASE:
-            self.active_action = None
-            self.current_keypress = None
+            self._pending_release = True
 
         # Callback always needs to return True
         return True
@@ -916,6 +916,12 @@ class KeyboardRobotController:
         # keypress_str = self.current_keypress.__str__().split(".")[-1]
         # print("Pressed {}. Action: {}".format(keypress_str, action.tolist()))
         # sys.stdout.write("\033[F")
+
+        # Clear action after consuming if a key release was pending
+        if self._pending_release:
+            self.active_action = None
+            self.current_keypress = None
+            self._pending_release = False
 
         # Return action
         return action
