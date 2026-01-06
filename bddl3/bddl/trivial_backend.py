@@ -30,7 +30,6 @@ class TrivialBackend(BDDLBackend):
             "filled": TrivialFilledPredicate,
             "saturated": TrivialSaturatedPredicate,
             "contains": TrivialContainsPredicate,
-            "ontop": TrivialOnTopPredicate,
             "nextto": TrivialNextToPredicate,
             "under": TrivialUnderPredicate,
             "touching": TrivialTouchingPredicate,
