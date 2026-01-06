@@ -143,7 +143,8 @@ def get_task_instance_path(scene_name):
     Returns:
         str: file path to the scene name
     """
-    task_instances_path = os.path.join(gm.DATA_PATH, "2025-challenge-task-instances")
+    # task_instances_path = os.path.join(gm.DATA_PATH, "2025-challenge-task-instances")
+    task_instances_path = os.path.join(gm.DATA_PATH, "ispatialgym-instances")
     scenes_path = os.path.join(task_instances_path, "scenes")
     log.info("Scene name: {}".format(scene_name))
     if scene_name in os.listdir(scenes_path):
