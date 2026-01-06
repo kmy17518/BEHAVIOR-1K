@@ -82,6 +82,18 @@ bringing_water:
     - -0.887542724609375
     - 0.0050048828125
     scene_model: house_single_floor
+camera_relocalization:
+  0:
+    robot_start_orientation:
+    - 0.0
+    - 0.0
+    - 0.7602934837341309
+    - 0.6495797038078308
+    robot_start_position:
+    - 4.562397003173828
+    - 6.0430450439453125
+    - 0.003765106201171875
+    scene_model: house_double_floor_lower
 can_beans:
   0:
     robot_start_orientation:
@@ -538,6 +550,18 @@ outfit_a_basic_toolbox:
     - -1.469085693359375
     - 0.004974365234375
     scene_model: house_single_floor
+path_integration:
+  0:
+    robot_start_orientation:
+    - 0.0
+    - 0.0
+    - 0.7602934837341309
+    - 0.6495797038078308
+    robot_start_position:
+    - 4.562397003173828
+    - 6.0430450439453125
+    - 0.003765106201171875
+    scene_model: house_double_floor_lower
 picking_up_toys:
   0:
     robot_start_orientation:
@@ -658,6 +682,42 @@ putting_up_Christmas_decorations_inside:
     - 1.999237060546875
     - 0.004974365234375
     scene_model: house_single_floor
+relation_satisfaction_inside_toothbrush_beaker:
+  0:
+    robot_start_orientation:
+    - 0.0
+    - 0.0
+    - 0.7071067811865476
+    - 0.7071067811865476
+    robot_start_position:
+    - 1.1362
+    - 20.9
+    - 0.0
+    scene_model: Beechwood_0_garden
+relation_satisfaction_on_top_pepper_shaker_countertop:
+  0:
+    robot_start_orientation:
+    - 0.0
+    - 0.0
+    - -0.7071067811865476
+    - 0.7071067811865476
+    robot_start_position:
+    - 5.5
+    - 1.5
+    - 0.0050048828125
+    scene_model: Beechwood_0_garden
+relation_satisfaction_under_tray_bowl:
+  0:
+    robot_start_orientation:
+    - 0.0
+    - 0.0
+    - 0.7071067811865476
+    - 0.7071067811865476
+    robot_start_position:
+    - 1.5
+    - 2.5
+    - 0.003765106201171875
+    scene_model: Benevolence_1_int
 re_shelving_library_books:
   0:
     robot_start_orientation:

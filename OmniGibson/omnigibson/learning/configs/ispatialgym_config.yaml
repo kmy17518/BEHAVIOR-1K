@@ -1,0 +1,13 @@
+defaults:
+  - _self_  # all below configs will override this conf.yaml
+  - robot: r1pro
+  - task: ispatialgym
+  - policy: ???
+
+env_wrapper: 
+  _target_: omnigibson.learning.wrappers.RGBLowResWrapper
+policy_name: ???  # filled by policy
+headless: true  # whether to run in headless mode (no GUI)
+eval_instance_ids: null  # specific list of instance ids to eval on, if null test on all instances
+write_video: true # whether we record videos during rollout
+log_path: ???

@@ -286,6 +286,50 @@ def generate_basic_environment_config(task_name, task_cfg):
     }
     return cfg
 
+def generate_ispatialgym_environment_config(task_name, task_cfg):
+    """
+    Generate a ISpatialGymTask environment configuration
+
+    Args:
+        task_name (str): Name of the task
+        task_cfg: Dictionary of task config
+
+    Returns:
+        dict: Environment configuration
+    """
+    cfg = {
+        "env": {
+            "action_frequency": 30,
+            "rendering_frequency": 30,
+            "physics_frequency": 120,
+        },
+        "scene": {
+            "type": "InteractiveTraversableScene",
+            "scene_model": task_cfg["scene_model"],
+            "load_room_types": None,
+            "load_room_instances": task_cfg.get("load_room_instances", None),
+            "include_robots": False,
+        },
+        "task": {
+            "type": "ISpatialGymTask",
+            "activity_name": task_name,
+            "activity_definition_id": 0,
+            "activity_instance_id": 0,
+            "predefined_problem": None,
+            "online_object_sampling": False,
+            "debug_object_sampling": False,
+            "highlight_task_relevant_objects": False,
+            "termination_config": {
+                "max_steps": 5000,
+            },
+            "reward_config": {
+                "r_potential": 1.0,
+            },
+            "include_obs": False,
+        },
+    }
+    return cfg
+
 
 def flatten_obs_dict(obs: dict, parent_key: str = "") -> dict:
     """
