@@ -1,0 +1,16 @@
+(define (problem path_integration-0)
+    (:domain omnigibson)
+
+    (:objects
+        agent.n.01_1 - agent.n.01
+        floor.n.01_1 - floor.n.01
+    )
+    
+    (:init 
+        (ontop agent.n.01_1 floor.n.01_1)
+    )
+    
+    (:goal 
+        (has_pose agent.n.01_1)
+    )
+)
