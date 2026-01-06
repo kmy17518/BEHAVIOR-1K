@@ -3,6 +3,7 @@ import random
 import re
 from collections import defaultdict
 from copy import deepcopy
+import numpy as np
 
 import bddl
 import networkx as nx
@@ -15,6 +16,8 @@ from bddl.logic_base import AtomicFormula, BinaryAtomicFormula, UnaryAtomicFormu
 from bddl.object_taxonomy import ObjectTaxonomy
 
 import omnigibson as og
+import omnigibson.utils.transform_utils as T
+
 from omnigibson import object_states
 from omnigibson.macros import create_module_macros
 from omnigibson.object_states.factory import _KINEMATIC_STATE_SET, get_system_states
@@ -149,6 +152,70 @@ class ObjectStateRealPredicate(UnsampleablePredicate, UnaryAtomicFormula):
         return entity.exists
 
 
+class RobotHasPosePredicate(UnsampleablePredicate, UnaryAtomicFormula):
+    """
+    Predicate to check if robot's link is at a specific pose.
+    
+    Goal parameters should be set on the robot entity via:
+        robot.pose_goal = {
+            "goal_pos": th.tensor([x, y, z]),
+            "goal_quat": th.tensor([x, y, z, w]),
+            "pos_tolerance": 0.1,
+            "ori_tolerance": 0.1  # in radians
+            "link_name": str
+        }
+    """
+    STATE_NAME = "has_pose"
+
+    def _evaluate(self, entity, **kwargs):
+        robot = entity.wrapped_obj
+        if robot is None or not entity.exists:
+            return False
+        
+        # Get pose goal from robot (set by task)
+        pose_goal = getattr(robot, "pose_goal", None) # TODO: Is storing this in robot state correct?
+        if pose_goal is None:
+            log.warning("RobotHasPosePredicate: No pose_goal set on robot. Set robot.pose_goal = {'goal_pos': ..., 'goal_quat': ..., 'pos_tolerance': ..., 'ori_tolerance': ..., 'link_name': ...}")
+            return False
+        
+        goal_pos = pose_goal.get("goal_pos", None)
+        goal_quat = pose_goal.get("goal_quat", None)
+        pos_tolerance = pose_goal.get("pos_tolerance", None)
+        ori_tolerance = pose_goal.get("ori_tolerance", None)
+
+        assert goal_pos is not None and pos_tolerance is not None, "goal_pos and pos_tolerance must be set"
+        
+        link_name = pose_goal.get("link_name", None)
+
+        if link_name: # TODO: Restricted to cameras for now. Add support for other links later.
+            # Use camera parameters which are guaranteed to be in sync with the visual observations.
+            camera = robot.sensors[link_name]
+            direct_cam_pose = camera.camera_parameters["cameraViewTransform"]
+            if np.allclose(direct_cam_pose, np.zeros(16)):
+                current_pos, current_quat = camera.get_position_orientation()
+            else:
+                current_pos, current_quat = T.mat2pose(th.tensor(np.linalg.inv(np.reshape(direct_cam_pose, [4, 4]).T), dtype=th.float32))
+        else: # robot pose
+            current_pos, current_quat = robot.get_position_orientation()
+
+        # Check position tolerance
+        if pos_tolerance is not None:
+            pos_distance = th.norm(current_pos - goal_pos)
+            if pos_distance.item() > pos_tolerance:
+                return False
+        
+        if ori_tolerance is not None:
+            # Check orientation tolerance (using quaternion distance)
+            # Quaternion distance: angle = 2 * arccos(|q1 · q2|)
+            dot_product = th.abs(th.sum(current_quat * goal_quat))
+            dot_product = th.clamp(dot_product, -1.0, 1.0)
+            angle_diff = 2.0 * th.acos(dot_product)
+            if angle_diff.item() > ori_tolerance:
+                return False
+        
+        return True
+
+
 class ObjectStateUnaryPredicate(UnaryAtomicFormula):
     STATE_CLASS = None
     STATE_NAME = None
@@ -257,6 +324,7 @@ SUPPORTED_PREDICATES = {
     "future": ObjectStateFuturePredicate,
     "real": ObjectStateRealPredicate,
     "insource": ObjectStateInsourcePredicate,
+    "has_pose": RobotHasPosePredicate,
 }
 
 KINEMATIC_STATES_BDDL = frozenset([state.__name__.lower() for state in _KINEMATIC_STATE_SET] + ["attached"])
