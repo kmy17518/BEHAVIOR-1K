@@ -1,0 +1,6 @@
+Task ID,Task,Public Test Instance IDs
+0,camera_relocalization,0
+1,path_integration,0
+2, relation_satisfaction_on_top_pepper_shaker_countertop, 0
+3, relation_satisfaction_under_tray_bowl, 0
+4, relation_satisfaction_inside_toothbrush_beaker, 0
