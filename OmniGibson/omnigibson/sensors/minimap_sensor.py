@@ -35,7 +35,9 @@ class MinimapSensor(BaseSensor):
         """
         return {"rgb"}
 
-    def __init__(self, scene, robot, name="minimap", resolution=256, arrow_size=5, arrow_color=(255, 0, 0), seg_alpha=0.5):
+    def __init__(
+        self, scene, robot, name="minimap", resolution=256, arrow_size=5, arrow_color=(255, 0, 0), seg_alpha=0.5
+    ):
         """
         Args:
             scene: Scene object containing seg_map and trav_map
@@ -157,7 +159,7 @@ class MinimapSensor(BaseSensor):
             np.ndarray: Combined RGB map with segmentation overlay on traversability
         """
         # Convert traversability map to numpy and ensure proper size match
-        trav_np = trav_map.numpy() if hasattr(trav_map, 'numpy') else trav_map
+        trav_np = trav_map.numpy() if hasattr(trav_map, "numpy") else trav_map
 
         # Handle size mismatch by resizing traversability map to match segmentation map
         seg_height, seg_width = colored_seg_map.shape[:2]
@@ -171,8 +173,7 @@ class MinimapSensor(BaseSensor):
 
         # Blend: combined = trav * (1 - alpha) + seg * alpha
         alpha = self.seg_alpha
-        combined = (trav_rgb.astype(np.float32) * (1 - alpha) +
-                    colored_seg_map.astype(np.float32) * alpha)
+        combined = trav_rgb.astype(np.float32) * (1 - alpha) + colored_seg_map.astype(np.float32) * alpha
         combined = np.clip(combined, 0, 255).astype(np.uint8)
 
         return combined
@@ -304,10 +305,7 @@ class MinimapSensor(BaseSensor):
         # ByteImageProvider expects RGBA format
         if rgb_array.shape[-1] == 3:
             # Add alpha channel (fully opaque)
-            rgba = np.concatenate([
-                rgb_array,
-                np.full((*rgb_array.shape[:2], 1), 255, dtype=np.uint8)
-            ], axis=-1)
+            rgba = np.concatenate([rgb_array, np.full((*rgb_array.shape[:2], 1), 255, dtype=np.uint8)], axis=-1)
         else:
             rgba = rgb_array
 
@@ -318,14 +316,14 @@ class MinimapSensor(BaseSensor):
         # set_bytes_data expects (data_bytes, [width, height])
         self._byte_provider.set_bytes_data(
             rgba.flatten().tolist(),
-            [rgba.shape[1], rgba.shape[0]]  # [width, height]
+            [rgba.shape[1], rgba.shape[0]],  # [width, height]
         )
 
     def update_display(self):
         """
         Update the minimap display with current robot position.
         Call this every frame or whenever you want the minimap to update.
-        
+
         This is fast because it uses in-memory ByteImageProvider (no disk I/O).
         """
         if self._byte_provider is None:
@@ -352,7 +350,7 @@ class MinimapSensor(BaseSensor):
     def visible(self, value):
         """
         Set minimap window visibility.
-        
+
         Args:
             value (bool): Whether the minimap should be visible
         """

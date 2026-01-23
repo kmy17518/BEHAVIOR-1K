@@ -53,7 +53,7 @@ def build_behavior_task_index():
         return _TASK_INDEX
 
     # Pattern: {scene_model}_task_{task_name}_{def_id}_{inst_id}_template.json
-    pattern = re.compile(r'^(.+)_task_(.+)_(\d+)_(\d+)_template\.json$')
+    pattern = re.compile(r"^(.+)_task_(.+)_(\d+)_(\d+)_template\.json$")
 
     for scene_model in os.listdir(instances_path):
         json_dir = os.path.join(instances_path, scene_model, "json")
@@ -106,7 +106,7 @@ def load_task_config_from_instances(task_name, activity_definition_id, activity_
     scene_model = info["scene_model"]
 
     # Read robot pose from template metadata
-    with open(template_path, 'r') as f:
+    with open(template_path, "r") as f:
         data = json.load(f)
 
     robot_poses = data["metadata"]["task"]["robot_poses"]
@@ -154,7 +154,18 @@ def choose_controllers(robot, random_selection=False):
 
     return controller_choices
 
-def main(task_name: str, activity_definition_id: int = 0, activity_instance_id: int = 0, quickstart: bool = False, record_video: bool = False, video_path: str = None, enable_camera_teleop: bool = False, highlight_tro: bool = False, enable_minimap: bool = False):
+
+def main(
+    task_name: str,
+    activity_definition_id: int = 0,
+    activity_instance_id: int = 0,
+    quickstart: bool = False,
+    record_video: bool = False,
+    video_path: str = None,
+    enable_camera_teleop: bool = False,
+    highlight_tro: bool = False,
+    enable_minimap: bool = False,
+):
     """
     Teleoperate a robot in a iSpatialGym scene.
 
@@ -171,7 +182,9 @@ def main(task_name: str, activity_definition_id: int = 0, activity_instance_id: 
     """
 
     # Load task config from ispatialgym-instances dataset
-    task_cfg, template_path = load_task_config_from_instances(task_name, activity_definition_id, 0) # currently, template always end with _0
+    task_cfg, template_path = load_task_config_from_instances(
+        task_name, activity_definition_id, 0
+    )  # currently, template always end with _0
     cfg = generate_basic_environment_config(task_name=task_name, task_cfg=task_cfg)
     cfg["robots"] = [
         generate_robot_config(
@@ -193,8 +206,8 @@ def main(task_name: str, activity_definition_id: int = 0, activity_instance_id: 
 
     env = og.Environment(configs=cfg)
 
-    # load robot 
-    robot = env.robots[0] 
+    # load robot
+    robot = env.robots[0]
 
     # load task instance
     scene_model = env.task.scene_name
@@ -238,15 +251,15 @@ def main(task_name: str, activity_definition_id: int = 0, activity_instance_id: 
         highlighted_tros = []
         for tro_name, tro_entity in env.task.object_scope.items():
             # Skip systems and non-existent entities
-            if hasattr(tro_entity, 'is_system') and tro_entity.is_system:
+            if hasattr(tro_entity, "is_system") and tro_entity.is_system:
                 continue
-            if hasattr(tro_entity, 'exists') and not tro_entity.exists:
+            if hasattr(tro_entity, "exists") and not tro_entity.exists:
                 continue
             # Skip the robot (agent) and floor objects
             if "agent" in tro_name.lower() or "floor" in tro_name.lower():
                 continue
             # Set custom highlight color and enable highlighting
-            if hasattr(tro_entity, 'set_highlight_properties'):
+            if hasattr(tro_entity, "set_highlight_properties"):
                 tro_entity.set_highlight_properties(color=tro_color)
                 tro_entity.highlighted = True
                 highlighted_tros.append(tro_name)
@@ -268,8 +281,7 @@ def main(task_name: str, activity_definition_id: int = 0, activity_instance_id: 
     }
     if not quickstart:
         controller_choices = choose_controllers(robot=robot)
-    
-    
+
     # Update the control mode of the robot
     controller_config = {component: {"name": name} for component, name in controller_choices.items()}
     robot.reload_controllers(controller_config=controller_config)
@@ -322,6 +334,7 @@ def main(task_name: str, activity_definition_id: int = 0, activity_instance_id: 
 
     # Record waypoints
     waypoints = []
+
     def add_waypoint():
         nonlocal waypoints
         pos = robot.get_position_orientation()[0]
@@ -351,7 +364,10 @@ def main(task_name: str, activity_definition_id: int = 0, activity_instance_id: 
 
     def get_save_dir():
         base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "demos")
-        os.makedirs(os.path.join(base_dir, task_name, str(activity_definition_id), str(activity_instance_id), unique_id), exist_ok=True)
+        os.makedirs(
+            os.path.join(base_dir, task_name, str(activity_definition_id), str(activity_instance_id), unique_id),
+            exist_ok=True,
+        )
         return os.path.join(base_dir, task_name, str(activity_definition_id), str(activity_instance_id), unique_id)
 
     video_writer = None
@@ -359,7 +375,9 @@ def main(task_name: str, activity_definition_id: int = 0, activity_instance_id: 
     if record_video:
         if video_path is None:
             save_dir = get_save_dir()
-            video_path = os.path.join(save_dir, f"video_{task_name}_{activity_definition_id}_{activity_instance_id}.mp4")
+            video_path = os.path.join(
+                save_dir, f"video_{task_name}_{activity_definition_id}_{activity_instance_id}.mp4"
+            )
         os.makedirs(os.path.dirname(video_path) if os.path.dirname(video_path) else ".", exist_ok=True)
         video_writer = create_video_writer(
             fpath=video_path,
@@ -384,13 +402,21 @@ def main(task_name: str, activity_definition_id: int = 0, activity_instance_id: 
             video_saved = True
             video_writer = None
             # save waypoints (convert tensors to lists for JSON serialization)
-            waypoints_serializable = [wp.tolist() if hasattr(wp, 'tolist') else wp for wp in waypoints]
-            with open(os.path.join(os.path.dirname(video_path), f"waypoints_{task_name}_{activity_definition_id}_{activity_instance_id}.json"), "w") as f:
+            waypoints_serializable = [wp.tolist() if hasattr(wp, "tolist") else wp for wp in waypoints]
+            with open(
+                os.path.join(
+                    os.path.dirname(video_path),
+                    f"waypoints_{task_name}_{activity_definition_id}_{activity_instance_id}.json",
+                ),
+                "w",
+            ) as f:
                 json.dump(waypoints_serializable, f)
 
             og.log.info(f"Video saved to: {video_path}")
-            og.log.info(f"Waypoints saved to: {os.path.join(os.path.dirname(video_path), f'waypoints_{task_name}_{activity_definition_id}_{activity_instance_id}.json')}")
-        
+            og.log.info(
+                f"Waypoints saved to: {os.path.join(os.path.dirname(video_path), f'waypoints_{task_name}_{activity_definition_id}_{activity_instance_id}.json')}"
+            )
+
         except Exception as e:
             og.log.info(f"Error saving video: {e}")
 
@@ -411,10 +437,10 @@ def main(task_name: str, activity_definition_id: int = 0, activity_instance_id: 
         # Get the camera sensor
         camera_sensor_name = front_view_camera_name.split("::")[1]
         camera = robot.sensors[camera_sensor_name]
-        
+
         # Get camera pose using the same logic as preprocess_obs
         # camera.get_position_orientation() returns the most recent camera poses, but since og render is "async",
-        # it may not be in sync with the visual observations. camera.camera_parameters["cameraViewTransform"] 
+        # it may not be in sync with the visual observations. camera.camera_parameters["cameraViewTransform"]
         # is guaranteed to be in sync with the visual observations.
         direct_cam_pose = camera.camera_parameters["cameraViewTransform"]
         if np.allclose(direct_cam_pose, np.zeros(16)):
@@ -422,32 +448,34 @@ def main(task_name: str, activity_definition_id: int = 0, activity_instance_id: 
             cam_pos, cam_quat = camera.get_position_orientation()
         else:
             # Extract pose from the synchronized cameraViewTransform matrix
-            cam_pos, cam_quat = T.mat2pose(th.tensor(np.linalg.inv(np.reshape(direct_cam_pose, [4, 4]).T), dtype=th.float32))
+            cam_pos, cam_quat = T.mat2pose(
+                th.tensor(np.linalg.inv(np.reshape(direct_cam_pose, [4, 4]).T), dtype=th.float32)
+            )
         og.log.info(f"Front-view camera ({front_view_camera_name}) pose:")
         og.log.info(f"  Position: {cam_pos.tolist()}")
         og.log.info(f"  Orientation: {cam_quat.tolist()}")
-        
+
         # Determine save directory (same as video_path directory)
         if video_path is not None:
             save_dir = os.path.dirname(video_path) if os.path.dirname(video_path) else "."
         else:
             save_dir = get_save_dir()
         os.makedirs(save_dir, exist_ok=True)
-        
+
         # Get current observation for the camera image
         current_obs, _ = env.get_obs()
         current_obs = flatten_obs_dict(current_obs)
-        
+
         # Get the front-view camera RGB image
         rgb_key = front_view_camera_name + "::rgb"
         if rgb_key in current_obs:
             front_view_rgb = current_obs[rgb_key][:, :, :3].numpy()
-            
+
             # Save image (convert RGB to BGR for cv2)
             img_filename = f"front_view_camera_{front_view_save_counter[0]}.png"
             img_path = os.path.join(save_dir, img_filename)
             cv2.imwrite(img_path, cv2.cvtColor(front_view_rgb, cv2.COLOR_RGB2BGR))
-            
+
             # Save pose as JSON
             pose_filename = f"front_view_camera_pose_{front_view_save_counter[0]}.json"
             pose_path = os.path.join(save_dir, pose_filename)
@@ -458,10 +486,10 @@ def main(task_name: str, activity_definition_id: int = 0, activity_instance_id: 
             }
             with open(pose_path, "w") as f:
                 json.dump(pose_data, f, indent=2)
-            
+
             og.log.info(f"Saved front-view camera image to: {img_path}")
             og.log.info(f"Saved front-view camera pose to: {pose_path}")
-            
+
             front_view_save_counter[0] += 1
         else:
             og.log.warning(f"Front-view camera RGB key '{rgb_key}' not found in observations")
@@ -502,7 +530,7 @@ def main(task_name: str, activity_definition_id: int = 0, activity_instance_id: 
                 cam_rel_poses.append(th.cat(T.relative_pose_transform(*cam_pose, *base_pose)))
         obs["robot_r1::cam_rel_poses"] = th.cat(cam_rel_poses, axis=-1)
         return obs
-    
+
     def write_video_frame(obs):
         """Write current observation frame to video."""
         if video_writer is None:
@@ -590,7 +618,6 @@ def main(task_name: str, activity_definition_id: int = 0, activity_instance_id: 
     og.shutdown()
 
 
-
 if __name__ == "__main__":
     import argparse
 
@@ -603,7 +630,9 @@ if __name__ == "__main__":
     parser.add_argument("--record_video", action="store_true", help="Enable video recording")
     parser.add_argument("--video_path", type=str, default=None, help="Path to save video")
     parser.add_argument("--enable_camera_teleop", action="store_true", help="Enable camera teleoperation")
-    parser.add_argument("--highlight_tro", action="store_true", help="Highlight task-relevant objects (uses cyan color)")
+    parser.add_argument(
+        "--highlight_tro", action="store_true", help="Highlight task-relevant objects (uses cyan color)"
+    )
     parser.add_argument("--enable_minimap", action="store_true", help="Enable minimap display")
 
     args = parser.parse_args()
