@@ -12,7 +12,6 @@ import omnigibson as og
 import omnigibson.lazy as lazy
 import omnigibson.utils.transform_utils as T
 from omnigibson.learning.utils.eval_utils import (
-    PROPRIOCEPTION_INDICES,
     ROBOT_CAMERA_NAMES,
     flatten_obs_dict,
     generate_basic_environment_config,
@@ -24,12 +23,13 @@ from omnigibson.utils.asset_utils import get_task_instance_path
 from omnigibson.utils.python_utils import recursively_convert_to_torch
 from omnigibson.utils.ui_utils import KeyboardEventHandler, KeyboardRobotController, choose_from_options
 
+
 # TODO: Remove hardcoded robot model name
 ROBOT_NAME = "R1Pro"
-
 # Module-level cache for task index
 _TASK_INDEX = None
 
+gm.ENABLE_FLATCACHE = True
 og.log.setLevel(logging.INFO)
 
 
@@ -196,8 +196,7 @@ def main(
         )
     ]
     # Enable sensors by setting observation modalities (required for camera-based tasks)
-    cfg["robots"][0]["obs_modalities"] = ["proprio", "rgb"]
-    cfg["robots"][0]["proprio_obs"] = list(PROPRIOCEPTION_INDICES[ROBOT_NAME].keys())
+    cfg["robots"][0]["obs_modalities"] = ["rgb"]
 
     # Set task activity_definition_id and activity_instance_id in config
     cfg["task"]["activity_definition_id"] = activity_definition_id
@@ -503,37 +502,6 @@ def main(
     )
     og.log.info("\t Y: Save front-view camera image and pose")
 
-    def preprocess_obs(obs: dict) -> dict:
-        """
-        Preprocess the observation dictionary before passing it to the policy.
-        Args:
-            obs (dict): The observation dictionary to preprocess.
-
-        Returns:
-            dict: The preprocessed observation dictionary.
-        """
-        obs = flatten_obs_dict(obs)
-        base_pose = robot.get_position_orientation()
-        cam_rel_poses = []
-        # The first time we query for camera parameters, it will return all zeros
-        # For this case, we use camera.get_position_orientation() instead.
-        # The reason we are not using camera.get_position_orientation() by default is because it will always return the most recent camera poses
-        # However, since og render is somewhat "async", it takes >= 3 render calls per step to actually get the up-to-date camera renderings
-        # Since we are using n_render_iterations=1 for speed concern, we need the correct corresponding camera poses instead of the most update-to-date one.
-        # Thus, we use camera parameters which are guaranteed to be in sync with the visual observations.
-        for camera_name in ROBOT_CAMERA_NAMES[robot.model_name].values():
-            camera = robot.sensors[camera_name.split("::")[1]]
-            direct_cam_pose = camera.camera_parameters["cameraViewTransform"]
-            if np.allclose(direct_cam_pose, np.zeros(16)):
-                cam_rel_poses.append(
-                    th.cat(T.relative_pose_transform(*(camera.get_position_orientation()), *base_pose))
-                )
-            else:
-                cam_pose = T.mat2pose(th.tensor(np.linalg.inv(np.reshape(direct_cam_pose, [4, 4]).T), dtype=th.float32))
-                cam_rel_poses.append(th.cat(T.relative_pose_transform(*cam_pose, *base_pose)))
-        obs["robot_r1::cam_rel_poses"] = th.cat(cam_rel_poses, axis=-1)
-        return obs
-
     def write_video_frame(obs):
         """Write current observation frame to video."""
         if video_writer is None:
@@ -589,15 +557,13 @@ def main(
     # Capture initial frame before any actions
     if record_video:
         initial_obs, _ = env.get_obs()
-        initial_obs = preprocess_obs(initial_obs)
+        initial_obs = flatten_obs_dict(initial_obs)
         write_video_frame(initial_obs)
 
     try:
         while step != max_steps:
             action = action_generator.get_teleop_action()
-
             obs, _, _, _, _ = env.step(action=action)
-            obs = preprocess_obs(obs)
 
             # Update minimap display
             if minimap_sensor is not None:
@@ -605,6 +571,7 @@ def main(
 
             # Write video frame if recording
             if record_video:
+                obs = flatten_obs_dict(obs)
                 write_video_frame(obs)
 
             step += 1
