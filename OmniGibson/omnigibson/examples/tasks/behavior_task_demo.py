@@ -185,7 +185,9 @@ def main(
     """
 
     # Load task config from 2025-challenge-task-instances dataset
-    task_cfg, template_path = load_task_config_from_instances(task_name, activity_definition_id, 0) # Shared template _0 is used for all activity instances
+    task_cfg, template_path = load_task_config_from_instances(
+        task_name, activity_definition_id, 0
+    )  # Shared template _0 is used for all activity instances
     cfg = generate_basic_environment_config(task_name=task_name, task_cfg=task_cfg)
     cfg["robots"] = [
         generate_robot_config(

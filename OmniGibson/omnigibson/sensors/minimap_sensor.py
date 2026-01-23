@@ -55,7 +55,9 @@ class MinimapSensor(BaseSensor):
         """
         return {"rgb"}
 
-    def __init__(self, scene, robot, name="minimap", resolution=256, arrow_size=5, arrow_color=(255, 0, 0), seg_alpha=0.5):
+    def __init__(
+        self, scene, robot, name="minimap", resolution=256, arrow_size=5, arrow_color=(255, 0, 0), seg_alpha=0.5
+    ):
         """
         Args:
             scene: Scene object containing seg_map and trav_map
