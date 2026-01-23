@@ -7,6 +7,7 @@ import omnigibson as og
 import omnigibson.lazy as lazy
 import omnigibson.utils.transform_utils as T
 from omnigibson.sensors.sensor_base import BaseSensor
+from omnigibson.utils.numpy_utils import NumpyTypes
 from omnigibson.utils.python_utils import classproperty
 from omnigibson.utils.sim_utils import set_carb_setting
 
@@ -35,9 +36,26 @@ class MinimapSensor(BaseSensor):
         """
         return {"rgb"}
 
-    def __init__(
-        self, scene, robot, name="minimap", resolution=256, arrow_size=5, arrow_color=(255, 0, 0), seg_alpha=0.5
-    ):
+    @property
+    def _obs_space_mapping(self):
+        """
+        Returns:
+            dict: Observation space mapping for minimap RGB output
+        """
+        return {
+            "rgb": ((self.resolution, self.resolution, 3), 0, 255, NumpyTypes.UINT8),
+        }
+
+    @classproperty
+    def no_noise_modalities(cls):
+        """
+        Returns:
+            set: Modalities that should not have noise applied.
+                 Minimap is a visualization, not a real sensor reading.
+        """
+        return {"rgb"}
+
+    def __init__(self, scene, robot, name="minimap", resolution=256, arrow_size=5, arrow_color=(255, 0, 0), seg_alpha=0.5):
         """
         Args:
             scene: Scene object containing seg_map and trav_map
@@ -92,7 +110,14 @@ class MinimapSensor(BaseSensor):
         """Create omni.ui window with ByteImageProvider for fast minimap display"""
         self._create_ui_window()
 
-        # Initialize display with base map
+    def _initialize(self):
+        """
+        Initialize the sensor after it has been fully loaded.
+        Ensures that robot references are valid before the first display update.
+        """
+        super()._initialize()
+
+        # Initialize display with base map and current robot pose
         self.update_display()
 
     def _create_ui_window(self):
@@ -137,9 +162,9 @@ class MinimapSensor(BaseSensor):
                 # Background/boundaries - dark gray
                 color = (50, 50, 50)
             else:
-                # Deterministic color from instance ID
-                np.random.seed(ins_id_val)
-                color = tuple(np.random.randint(80, 255, size=3).tolist())
+                # Deterministic color from instance ID using a local RNG
+                rng = np.random.RandomState(ins_id_val)
+                color = tuple(rng.randint(80, 255, size=3).tolist())
 
             # Apply color to all pixels with this instance ID
             mask = (self.seg_map.room_ins_map == ins_id).numpy()
@@ -287,8 +312,8 @@ class MinimapSensor(BaseSensor):
             adjusted_yaw = -(math.pi + yaw.item())
             self._draw_robot_arrow(minimap_resized, (center_x_scaled, center_y_scaled), adjusted_yaw)
 
-        # Convert to torch tensor
-        minimap_tensor = th.from_numpy(minimap_resized).float()
+        # Convert to torch tensor (keep as uint8 to match observation space)
+        minimap_tensor = th.from_numpy(minimap_resized)
 
         return {"rgb": minimap_tensor}, {}
 
