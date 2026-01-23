@@ -24,6 +24,9 @@ from omnigibson.utils.asset_utils import get_task_instance_path
 from omnigibson.utils.python_utils import recursively_convert_to_torch
 from omnigibson.utils.ui_utils import KeyboardEventHandler, KeyboardRobotController, choose_from_options
 
+# TODO: Remove hardcoded robot model name
+ROBOT_NAME = "R1Pro"
+
 # Module-level cache for task index
 _TASK_INDEX = None
 
@@ -113,8 +116,8 @@ def load_task_config_from_instances(task_name, activity_definition_id, activity_
 
     task_cfg = {
         "scene_model": scene_model,
-        "robot_start_position": robot_poses["R1Pro"][0]["position"],
-        "robot_start_orientation": robot_poses["R1Pro"][0]["orientation"],
+        "robot_start_position": robot_poses[ROBOT_NAME][0]["position"],
+        "robot_start_orientation": robot_poses[ROBOT_NAME][0]["orientation"],
         "load_room_instances": None,
     }
 
@@ -167,7 +170,7 @@ def main(
     enable_minimap: bool = False,
 ):
     """
-    Teleoperate a robot in a iSpatialGym scene.
+    Teleoperate a robot in a Behavior scene.
 
     Args:
         task_name: Name of the task/activity
@@ -181,10 +184,8 @@ def main(
         enable_minimap: Enable minimap display
     """
 
-    # Load task config from ispatialgym-instances dataset
-    task_cfg, template_path = load_task_config_from_instances(
-        task_name, activity_definition_id, 0
-    )  # currently, template always end with _0
+    # Load task config from 2025-challenge-task-instances dataset
+    task_cfg, template_path = load_task_config_from_instances(task_name, activity_definition_id, 0) # Shared template _0 is used for all activity instances
     cfg = generate_basic_environment_config(task_name=task_name, task_cfg=task_cfg)
     cfg["robots"] = [
         generate_robot_config(
@@ -194,7 +195,7 @@ def main(
     ]
     # Enable sensors by setting observation modalities (required for camera-based tasks)
     cfg["robots"][0]["obs_modalities"] = ["proprio", "rgb"]
-    cfg["robots"][0]["proprio_obs"] = list(PROPRIOCEPTION_INDICES["R1Pro"].keys())
+    cfg["robots"][0]["proprio_obs"] = list(PROPRIOCEPTION_INDICES[ROBOT_NAME].keys())
 
     # Set task activity_definition_id and activity_instance_id in config
     cfg["task"]["activity_definition_id"] = activity_definition_id
@@ -309,15 +310,15 @@ def main(
         callback_fn=lambda: env.reset(),
     )
 
-    # Print out relevant keyboard info if using keyboard teleop
-    if control_mode == "teleop":
-        action_generator.print_keyboard_teleop_info()
+    # Print out relevant keyboard info
+    action_generator.print_keyboard_teleop_info()
 
     # Move camera to a good position (currently set for picking_up_trash_0_0)
     og.sim.viewer_camera.set_position_orientation(
         position=[1.6, 6.15, 1.5], orientation=[-0.2322, 0.5895, 0.7199, -0.2835]
     )
-    og.sim.enable_viewer_camera_teleoperation()
+    if enable_camera_teleop:
+        og.sim.enable_viewer_camera_teleoperation()
 
     # Create minimap sensor if enabled
     minimap_sensor = None
@@ -429,7 +430,7 @@ def main(
     # Front-view camera capture functionality
     # Use "head" key from ROBOT_CAMERA_NAMES to avoid hardcoding camera name
     front_view_camera_key = "head"
-    front_view_camera_name = ROBOT_CAMERA_NAMES["R1Pro"][front_view_camera_key]
+    front_view_camera_name = ROBOT_CAMERA_NAMES[robot.model_name][front_view_camera_key]
     front_view_save_counter = [0]  # Use list to allow modification in closure
 
     def save_front_view_camera():
@@ -514,11 +515,11 @@ def main(
         cam_rel_poses = []
         # The first time we query for camera parameters, it will return all zeros
         # For this case, we use camera.get_position_orientation() instead.
-        # The reason we are not using camera.get_position_orientation() by defualt is because it will always return the most recent camera poses
+        # The reason we are not using camera.get_position_orientation() by default is because it will always return the most recent camera poses
         # However, since og render is somewhat "async", it takes >= 3 render calls per step to actually get the up-to-date camera renderings
         # Since we are using n_render_iterations=1 for speed concern, we need the correct corresponding camera poses instead of the most update-to-date one.
         # Thus, we use camera parameters which are guaranteed to be in sync with the visual observations.
-        for camera_name in ROBOT_CAMERA_NAMES["R1Pro"].values():
+        for camera_name in ROBOT_CAMERA_NAMES[robot.model_name].values():
             camera = robot.sensors[camera_name.split("::")[1]]
             direct_cam_pose = camera.camera_parameters["cameraViewTransform"]
             if np.allclose(direct_cam_pose, np.zeros(16)):
@@ -537,15 +538,15 @@ def main(
             return
         # Get RGB observations from robot cameras
         left_wrist_rgb = cv2.resize(
-            obs[ROBOT_CAMERA_NAMES["R1Pro"]["left_wrist"] + "::rgb"][:, :, :3].numpy(),
+            obs[ROBOT_CAMERA_NAMES[robot.model_name]["left_wrist"] + "::rgb"][:, :, :3].numpy(),
             (224, 224),
         )
         right_wrist_rgb = cv2.resize(
-            obs[ROBOT_CAMERA_NAMES["R1Pro"]["right_wrist"] + "::rgb"][:, :, :3].numpy(),
+            obs[ROBOT_CAMERA_NAMES[robot.model_name]["right_wrist"] + "::rgb"][:, :, :3].numpy(),
             (224, 224),
         )
         head_rgb = cv2.resize(
-            obs[ROBOT_CAMERA_NAMES["R1Pro"]["head"] + "::rgb"][:, :, :3].numpy(),
+            obs[ROBOT_CAMERA_NAMES[robot.model_name]["head"] + "::rgb"][:, :, :3].numpy(),
             (672, 672),  # Width x Height - match left panel height
         )
         # Get viewer camera RGB
@@ -563,9 +564,6 @@ def main(
             )
         else:
             minimap_rgb = np.zeros((224, 224, 3), dtype=np.uint8)
-        # Stack cameras: [left_wrist, right_wrist, minimap] on left, head in middle, viewer on right
-        left_panel = np.vstack([left_wrist_rgb, right_wrist_rgb, minimap_rgb])
-        frame = np.hstack([left_panel, head_rgb, viewer_rgb])
 
         # Stack cameras: [left_wrist, right_wrist] on left, head in middle, viewer on right
         frame = np.hstack([np.vstack([left_wrist_rgb, right_wrist_rgb, minimap_rgb]), head_rgb, viewer_rgb])
@@ -611,7 +609,8 @@ def main(
     except Exception as e:
         og.log.info(f"Loop exited: {e}")
     finally:
-        # Close video writer if not already saved via 'O' key
+        # Close video writer if not already saved via 'Z' key
+        # TODO: og shuts down before the video writer is closed, so we need to save the video manually.
         save_video()
 
     # Always shut down the environment cleanly at the end
