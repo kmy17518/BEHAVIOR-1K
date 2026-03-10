@@ -276,6 +276,15 @@ class BaseObject(EntityPrim, Registerable, metaclass=ABCMeta):
         return not self.kinematic_only and not self.is_asleep
 
     @property
+    def in_rooms(self):
+        """
+        Returns:
+            None or list of str: Room(s) that this object belongs to. None if not applicable.
+                Subclasses (e.g. DatasetObject) may override this to provide actual room info.
+        """
+        return None
+
+    @property
     def uuid(self):
         """
         Returns:
