@@ -1167,7 +1167,7 @@ class Robot(USDObject, GymObservable):
             # Else, set the pose of the robot frame, and then move the joint frame of the world_base_joint to match it
             else:
                 # Call the super() method to move the robot frame first
-                self._base_set_position_orientation(position, orientation, frame)
+                self._base_set_position_orientation(position, orientation, "world")
                 # Move the joint frame for the world_base_joint
                 if self._world_base_fixed_joint_prim is not None:
                     self._world_base_fixed_joint_prim.GetAttribute("physics:localPos0").Set(tuple(position))
@@ -3971,7 +3971,7 @@ class Robot(USDObject, GymObservable):
         """
         if self.is_holonomic_base:
             return self.base_footprint_link.get_position_orientation(frame=frame, clone=clone)
-        return super().get_position_orientation()
+        return super().get_position_orientation(frame=frame, clone=clone)
 
     def set_linear_velocity(self, velocity: th.Tensor):
         if self.is_holonomic_base:
