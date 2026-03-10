@@ -31,7 +31,7 @@ scene:
   include_robots: false
 
 robots:
-  - type: FrankaPanda
+  - model: franka
     obs_modalities: [rgb]
     include_sensor_names: null
     exclude_sensor_names: null
