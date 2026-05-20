@@ -163,6 +163,13 @@ class Broken(UnaryPredicate):
     pass
 
 
+class PoseReached(UnaryPredicate):
+    """True when an object's pose matches a goal pose (within tolerance) configured by
+    an external loader. See ``omnigibson.object_states.pose_reached.PoseReached``.
+    """
+    pass
+
+
 # ---------------------------------------------------------------------------
 # Binary predicates
 # ---------------------------------------------------------------------------
@@ -244,6 +251,7 @@ TOKEN_TO_PREDICATE = {
     "future": Future,
     "real": Real,
     "broken": Broken,
+    "pose_reached": PoseReached,
     # Binary
     "saturated": Saturated,
     "covered": Covered,

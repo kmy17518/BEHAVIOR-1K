@@ -25,6 +25,7 @@ from omnigibson.object_states.particle import ParticleRequirement
 from omnigibson.object_states.particle_modifier import ParticleApplier, ParticleRemover
 from omnigibson.object_states.particle_source_or_sink import ParticleSink, ParticleSource
 from omnigibson.object_states.pose import Pose
+from omnigibson.object_states.pose_reached import PoseReached
 from omnigibson.object_states.robot_related_states import IsGrasping, ObjectsInFOVOfRobot
 from omnigibson.object_states.saturated import Saturated
 from omnigibson.object_states.sliceable import SliceableRequirement
@@ -67,6 +68,7 @@ __all__ = [
     "ParticleSink",
     "ParticleSource",
     "Pose",
+    "PoseReached",
     "REGISTERED_OBJECT_STATES",
     "Saturated",
     "SliceableRequirement",
