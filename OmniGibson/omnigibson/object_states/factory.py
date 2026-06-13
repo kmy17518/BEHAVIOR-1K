@@ -29,6 +29,7 @@ from omnigibson.object_states import (
     ParticleRequirement,
     ParticleSink,
     ParticleSource,
+    PoseSettled,
     PoseReached,
     Saturated,
     SliceableRequirement,
@@ -81,6 +82,7 @@ _DEFAULT_STATE_SET = frozenset(
         Under,
         Covered,
         PoseReached,
+        PoseSettled,
     ]
 )
 

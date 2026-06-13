@@ -9,7 +9,7 @@ import omnigibson as og
 import omnigibson.utils.transform_utils as T
 from omnigibson.macros import gm
 from omnigibson.objects.dataset_object import DatasetObject
-from omnigibson.object_states import Pose
+from omnigibson.object_states import Pose, PoseSettled
 from omnigibson.reward_functions.potential_reward import PotentialReward
 from omnigibson.scenes.scene_base import Scene
 from omnigibson.scenes.traversable_scene import TraversableScene
@@ -117,6 +117,15 @@ class BehaviorTask(BaseTask):
         self.object_scope = None  # Maps str to sim object (BaseObject/BaseSystem) or None
         self.object_instance_to_category = None  # Maps str to str
         self.future_obj_instances = None  # set of str
+
+        # PoseSettled instrumentation (see _step_termination): instances referenced by a
+        # (pose_settled ...) goal atom, the goal HEAD indices that do NOT reference pose_settled
+        # ("other" goal conditions), and per-episode bookkeeping for the other-goals-success and
+        # latency read-outs surfaced in the env.step() info dict.
+        self._pose_settled_insts = []  # list of str
+        self._other_goal_head_idxs = []  # list of int
+        self._pose_settled_other_success = {}  # maps sim-step index (int) -> bool
+        self._t_other_success = -1  # first sim-step index at which all other goals were satisfied
 
         # Info for demonstration collection
         self.instruction_order = None  # th.tensor of int
@@ -251,6 +260,9 @@ class BehaviorTask(BaseTask):
             if obj is not None and isinstance(obj, DatasetObject):
                 obj.wake()
 
+        # (Re)activate PoseSettled pose-history tracking and reset its instrumentation for this episode
+        self._reset_pose_settled_tracking()
+
     def _load_non_low_dim_observation_space(self):
         # No non-low dim observations so we return an empty dict
         return dict()
@@ -333,6 +345,9 @@ class BehaviorTask(BaseTask):
         self.activity_initial_conditions = self.compiled_task.initial_conditions
         self.activity_goal_conditions = self.compiled_task.goal_conditions
         self.ground_goal_state_options = self.compiled_task.ground_goal_state_options
+
+        # Partition goal conditions into pose_settled atoms vs. "other" goal HEADs for instrumentation
+        self._discover_pose_settled_goal_conditions()
 
         # Demo attributes
         self.instruction_order = th.arange(len(self.compiled_task.conditions.parsed_goal_conditions))
@@ -616,12 +631,101 @@ class BehaviorTask(BaseTask):
 
         return low_dim_obs, dict()
 
+    @staticmethod
+    def _collect_pose_settled_insts(node):
+        """Recursively collect the resolved object-instance name(s) of any ``pose_settled`` leaf
+        predicate within a compiled condition (sub)tree."""
+        insts = []
+        if getattr(node, "STATE_NAME", None) == "pose_settled":
+            insts.extend(getattr(node, "inputs", []))
+        for child in getattr(node, "children", []):
+            # Some quantifier nodes (e.g. ForPairs) store children as a list of lists.
+            if isinstance(child, list):
+                for subchild in child:
+                    insts.extend(BehaviorTask._collect_pose_settled_insts(subchild))
+            else:
+                insts.extend(BehaviorTask._collect_pose_settled_insts(child))
+        return insts
+
+    def _discover_pose_settled_goal_conditions(self):
+        """Partition the compiled goal conditions into pose_settled atoms (recording the referenced
+        object instances) and the remaining ("other") goal HEADs by index. Assumes pose_settled
+        atoms are authored as their own top-level goal clauses (standard BDDL authoring); a HEAD
+        that references pose_settled at all is treated as a pose_settled condition (excluded from
+        "other")."""
+        self._pose_settled_insts = []
+        self._other_goal_head_idxs = []
+        for idx, head in enumerate(self.activity_goal_conditions):
+            head_insts = self._collect_pose_settled_insts(head)
+            if head_insts:
+                for inst in head_insts:
+                    if inst not in self._pose_settled_insts:
+                        self._pose_settled_insts.append(inst)
+            else:
+                self._other_goal_head_idxs.append(idx)
+
+    def _reset_pose_settled_tracking(self):
+        """Reset per-episode PoseSettled instrumentation and (re)activate pose-history tracking on
+        the objects referenced by a (pose_settled ...) goal atom."""
+        self._pose_settled_other_success = {}
+        self._t_other_success = -1
+        for inst in self._pose_settled_insts:
+            entity = self.object_scope.get(inst)
+            if entity is not None and PoseSettled in entity.states:
+                # Activate with module-default config; an external loader may override via set_config.
+                entity.states[PoseSettled].activate()
+
+    def _populate_pose_settled_info(self, info):
+        """Populate ``info["pose_settled"]`` (keyed by object instance) with, for each pose_settled
+        goal object: the ``settled`` boolean, whether the *other* goal conditions were satisfied
+        across the entire N-step window (``other_goals_success``), and ``latency_steps`` -- the
+        number of simulator steps from when the other goal conditions were first satisfied to the
+        start of the settled window. ``latency_steps`` is ``-1`` when the other goal conditions were
+        never satisfied (or while the object is not yet settled; the ``settled`` flag disambiguates
+        the two)."""
+        # Whether all "other" goal conditions are currently satisfied. Reuse the goal evaluation
+        # PredicateGoal already ran this step (recorded in info["goal_status"]) -- no re-evaluation.
+        satisfied = set(info["goal_status"]["satisfied"])
+        other_success = set(self._other_goal_head_idxs).issubset(satisfied)
+
+        t = og.sim.current_time_step_index
+        self._pose_settled_other_success[t] = other_success
+        if other_success and self._t_other_success < 0:
+            self._t_other_success = t
+
+        pose_settled_info = {}
+        for inst in self._pose_settled_insts:
+            entity = self.object_scope.get(inst)
+            if entity is None or PoseSettled not in entity.states:
+                pose_settled_info[inst] = {"settled": False, "other_goals_success": False, "latency_steps": -1}
+                continue
+            state = entity.states[PoseSettled]
+            settled = state.is_settled
+            window = state.window_indices
+            other_goals_success = bool(
+                settled and window and all(self._pose_settled_other_success.get(w, False) for w in window)
+            )
+            if settled and self._t_other_success >= 0:
+                latency_steps = state.settle_start_index - self._t_other_success
+            else:
+                latency_steps = -1
+            pose_settled_info[inst] = {
+                "settled": settled,
+                "other_goals_success": other_goals_success,
+                "latency_steps": latency_steps,
+            }
+        info["pose_settled"] = pose_settled_info
+
     def _step_termination(self, env, action, info=None):
         # Run super first
         done, info = super()._step_termination(env=env, action=action, info=info)
 
         # Add additional info
         info["goal_status"] = self._termination_conditions["predicate"].goal_status
+
+        # Surface PoseSettled instrumentation (settled / other-goals-success / latency) if used
+        if self._pose_settled_insts:
+            self._populate_pose_settled_info(info)
 
         return done, info
 

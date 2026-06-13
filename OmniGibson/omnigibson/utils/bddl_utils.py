@@ -199,6 +199,7 @@ PREDICATE_TO_STATE = {
     bddl_predicates.Unfolded: object_states.Unfolded,
     bddl_predicates.Draped: object_states.Draped,
     bddl_predicates.PoseReached: object_states.PoseReached,
+    bddl_predicates.PoseSettled: object_states.PoseSettled,
 }
 
 KINEMATIC_STATES_BDDL = frozenset([state.__name__.lower() for state in _KINEMATIC_STATE_SET] + ["attached"])

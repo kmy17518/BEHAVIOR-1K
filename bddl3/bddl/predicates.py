@@ -170,6 +170,14 @@ class PoseReached(UnaryPredicate):
     pass
 
 
+class PoseSettled(UnaryPredicate):
+    """True when an object's pose has stayed within tolerance for the last N simulator steps
+    (i.e. it has been held still). Temporal predicate -- accumulates pose history across steps.
+    See ``omnigibson.object_states.pose_settled.PoseSettled``.
+    """
+    pass
+
+
 # ---------------------------------------------------------------------------
 # Binary predicates
 # ---------------------------------------------------------------------------
@@ -252,6 +260,7 @@ TOKEN_TO_PREDICATE = {
     "real": Real,
     "broken": Broken,
     "pose_reached": PoseReached,
+    "pose_settled": PoseSettled,
     # Binary
     "saturated": Saturated,
     "covered": Covered,

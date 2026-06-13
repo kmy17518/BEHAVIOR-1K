@@ -26,6 +26,8 @@
         (insource ?obj1 ?obj2)
         (inroom ?obj1 ?obj2)
         (broken ?obj1)
+        (pose_reached ?obj1)
+        (pose_settled ?obj1)
         (grasped ?obj1 ?obj2)
     )
 )
