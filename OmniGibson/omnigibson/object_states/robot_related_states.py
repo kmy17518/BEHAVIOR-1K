@@ -1,3 +1,4 @@
+from omnigibson.controllers import IsGraspingState
 from omnigibson.object_states.object_state_base import AbsoluteObjectState, BooleanStateMixin, RelativeObjectState
 from omnigibson.sensors import VisionSensor
 
@@ -19,6 +20,22 @@ class IsGrasping(RelativeObjectState, BooleanStateMixin, RobotStateMixin):
     def _get_value(self, obj):
         # TODO: Make this work with non-assisted grasping
         return any(self.robot._ag_obj_in_hand[arm] == obj for arm in self.robot.arm_names)
+
+
+class Grasped(RelativeObjectState, BooleanStateMixin, RobotStateMixin):
+    """Binary predicate (grasped agent obj): True if the robot is grasping @obj in either gripper.
+
+    Unlike IsGrasping, this delegates to Robot.is_grasping(), so it follows the robot's configured
+    grasping_mode and works for both assisted/sticky and physical (non-assisted) grasps.
+    """
+
+    def _get_value(self, obj):
+        # Only manipulation robots can grasp; non-manipulation robots never satisfy this predicate.
+        if not self.robot.is_manipulation:
+            return False
+        return any(
+            self.robot.is_grasping(arm, candidate_obj=obj) == IsGraspingState.TRUE for arm in self.robot.arm_names
+        )
 
 
 # class InReachOfRobot(AbsoluteObjectState, BooleanStateMixin):
