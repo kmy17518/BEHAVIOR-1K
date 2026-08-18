@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dex-teleop"
+version = "0.1.0"
+description = "Landmark-based dexterous hand teleoperation for BEHAVIOR-1K"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+  "nlopt",
+  "numpy<2",
+  "pin",
+  "PyYAML",
+  "scipy",
+]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.scripts]
+dex-teleop-og = "dex_teleop.omnigibson.launcher:main"
+dex-teleop-replay = "dex_teleop.omnigibson.replay:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+dex_teleop = [
+  "arat/*.yaml",
+  "retargeting/configs/*.yaml",
+  "retargeting/urdf/**/*.urdf",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

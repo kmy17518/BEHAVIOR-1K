@@ -1,0 +1,2 @@
+[console_scripts]
+dex-teleop-og = dex_teleop.omnigibson.launcher:main

@@ -1,0 +1,139 @@
+# Per-item ARAT scoring rubrics. Source of truth for the rules: ARAT_scoring_guide.md.
+#
+# tracked_instance: BDDL instance of the manipulated object (resolved to the scene
+#   object through the task catalog's instance map).
+# target: what "placed at the target" means for this item.
+# grasp: the hand-movement components required for a score of 3 (and, for pinch, the
+#   mandatory finger opposition without which the item scores 0).
+# object_size_m: characteristic size for the voluntary-opening check (the hand must
+#   open at least to ~this aperture before contact).
+
+arat_grasp_block_10cm:
+  subscale: grasp
+  tracked_instance: arat_wooden_block.n.01_1
+  object_size_m: 0.10
+  target: {kind: shelf, shelf_instance: arat_box.n.01_1}
+  grasp: {class: opposition}
+
+arat_grasp_block_2_5cm:
+  subscale: grasp
+  tracked_instance: arat_wooden_block.n.01_1
+  object_size_m: 0.025
+  target: {kind: shelf, shelf_instance: arat_box.n.01_1}
+  grasp: {class: opposition}
+
+arat_grasp_block_5cm:
+  subscale: grasp
+  tracked_instance: arat_wooden_block.n.01_1
+  object_size_m: 0.05
+  target: {kind: shelf, shelf_instance: arat_box.n.01_1}
+  grasp: {class: opposition}
+
+arat_grasp_block_7_5cm:
+  subscale: grasp
+  tracked_instance: arat_wooden_block.n.01_1
+  object_size_m: 0.075
+  target: {kind: shelf, shelf_instance: arat_box.n.01_1}
+  grasp: {class: opposition}
+
+arat_grasp_cricket_ball:
+  subscale: grasp
+  tracked_instance: arat_cricket_ball.n.01_1
+  object_size_m: 0.072
+  target: {kind: shelf_or_tin, shelf_instance: arat_box.n.01_1, tin_instance: arat_tin.n.01_2}
+  grasp: {class: spherical}
+
+arat_grasp_sharpening_stone:
+  subscale: grasp
+  tracked_instance: arat_sharpening_stone.n.01_1
+  object_size_m: 0.03
+  target: {kind: shelf, shelf_instance: arat_box.n.01_1}
+  grasp: {class: lateral}
+
+arat_grip_pour_water:
+  subscale: grip
+  tracked_instance: arat_cup.n.01_1
+  object_size_m: 0.07
+  target: {kind: pour, source_instance: arat_cup.n.01_1, dest_instance: arat_cup.n.01_2}
+  grasp: {class: cylindrical}
+
+arat_grip_alloy_tube_2_5cm:
+  subscale: grip
+  tracked_instance: arat_alloy_tube.n.01_1
+  object_size_m: 0.0225
+  target: {kind: pegged, peg_instance: arat_bolt.n.01_1}
+  grasp: {class: pads_opposition}
+
+arat_grip_alloy_tube_1cm:
+  subscale: grip
+  tracked_instance: arat_alloy_tube.n.01_1
+  object_size_m: 0.01
+  target: {kind: pegged, peg_instance: arat_bolt.n.01_1}
+  grasp: {class: pads_opposition}
+
+arat_grip_washer_over_bolt:
+  subscale: grip
+  tracked_instance: arat_washer.n.01_1
+  object_size_m: 0.01
+  target: {kind: pegged, peg_instance: arat_bolt.n.01_1}
+  grasp: {class: pincer}
+
+arat_pinch_ball_bearing_ring:
+  subscale: pinch
+  tracked_instance: arat_ball_bearing.n.01_1
+  object_size_m: 0.006
+  target: {kind: tin, tin_instance: arat_tin.n.01_2}
+  grasp: {class: pinch, finger: ring}
+
+arat_pinch_marble_index:
+  subscale: pinch
+  tracked_instance: arat_marble.n.01_1
+  object_size_m: 0.016
+  target: {kind: tin, tin_instance: arat_tin.n.01_2}
+  grasp: {class: pinch, finger: index}
+
+arat_pinch_ball_bearing_middle:
+  subscale: pinch
+  tracked_instance: arat_ball_bearing.n.01_1
+  object_size_m: 0.006
+  target: {kind: tin, tin_instance: arat_tin.n.01_2}
+  grasp: {class: pinch, finger: middle}
+
+arat_pinch_ball_bearing_index:
+  subscale: pinch
+  tracked_instance: arat_ball_bearing.n.01_1
+  object_size_m: 0.006
+  target: {kind: tin, tin_instance: arat_tin.n.01_2}
+  grasp: {class: pinch, finger: index}
+
+arat_pinch_marble_ring:
+  subscale: pinch
+  tracked_instance: arat_marble.n.01_1
+  object_size_m: 0.016
+  target: {kind: tin, tin_instance: arat_tin.n.01_2}
+  grasp: {class: pinch, finger: ring}
+
+arat_pinch_marble_middle:
+  subscale: pinch
+  tracked_instance: arat_marble.n.01_1
+  object_size_m: 0.016
+  target: {kind: tin, tin_instance: arat_tin.n.01_2}
+  grasp: {class: pinch, finger: middle}
+
+arat_gross_movement_hand_behind_head:
+  subscale: gross_movement
+  tracked_instance: null
+  target: {kind: region, region: head_back, region_instance: mannequin.n.02_1}
+  grasp: {class: palmar}
+
+arat_gross_movement_hand_top_head:
+  subscale: gross_movement
+  tracked_instance: null
+  target: {kind: region, region: head_top, region_instance: mannequin.n.02_1}
+  grasp: {class: palmar}
+
+arat_gross_movement_hand_mouth:
+  subscale: gross_movement
+  tracked_instance: null
+  target: {kind: region, region: mouth, region_instance: mannequin.n.02_1}
+  grasp: {class: palmar}

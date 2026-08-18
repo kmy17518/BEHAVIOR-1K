@@ -1,0 +1,122 @@
+scene: arat_base
+placeholder_goals: false
+subscales:
+  grasp:
+    - arat_grasp_block_10cm
+    - arat_grasp_block_2_5cm
+    - arat_grasp_block_5cm
+    - arat_grasp_block_7_5cm
+    - arat_grasp_cricket_ball
+    - arat_grasp_sharpening_stone
+  grip:
+    - arat_grip_pour_water
+    - arat_grip_alloy_tube_2_5cm
+    - arat_grip_alloy_tube_1cm
+    - arat_grip_washer_over_bolt
+  pinch:
+    - arat_pinch_ball_bearing_ring
+    - arat_pinch_marble_index
+    - arat_pinch_ball_bearing_middle
+    - arat_pinch_ball_bearing_index
+    - arat_pinch_marble_ring
+    - arat_pinch_marble_middle
+  gross_movement:
+    - arat_gross_movement_hand_behind_head
+    - arat_gross_movement_hand_top_head
+    - arat_gross_movement_hand_mouth
+tasks:
+  arat_grasp_block_10cm:
+    subscale: grasp
+    label: Grasp, Block, 10cm
+    layout: grasp_block_10cm
+    instances: {arat_box.n.01_1: arat_box, arat_wooden_block.n.01_1: wooden_block_10}
+  arat_grasp_block_2_5cm:
+    subscale: grasp
+    label: Grasp, Block, 2.5cm
+    layout: grasp_block_2_5cm
+    instances: {arat_box.n.01_1: arat_box, arat_wooden_block.n.01_1: wooden_block_2_5}
+  arat_grasp_block_5cm:
+    subscale: grasp
+    label: Grasp, Block, 5cm
+    layout: grasp_block_5cm
+    instances: {arat_box.n.01_1: arat_box, arat_wooden_block.n.01_1: wooden_block_5_0}
+  arat_grasp_block_7_5cm:
+    subscale: grasp
+    label: Grasp, Block, 7.5cm
+    layout: grasp_block_7_5cm
+    instances: {arat_box.n.01_1: arat_box, arat_wooden_block.n.01_1: wooden_block_7_5}
+  arat_grasp_cricket_ball:
+    subscale: grasp
+    label: Grasp, Cricket ball
+    layout: grasp_cricket_ball
+    instances: {arat_box.n.01_1: arat_box, arat_cricket_ball.n.01_1: cricket_ball, arat_tin.n.01_1: tin_lid_1, arat_tin.n.01_2: tin_lid_2}
+  arat_grasp_sharpening_stone:
+    subscale: grasp
+    label: Grasp, Sharpening stone
+    layout: grasp_sharpening_stone
+    instances: {arat_box.n.01_1: arat_box, arat_sharpening_stone.n.01_1: sharpening_stone}
+  arat_grip_pour_water:
+    subscale: grip
+    label: Grip, Pour water from one glass to another
+    layout: grip_pour_water
+    instances: {arat_box.n.01_1: arat_box, arat_cup.n.01_1: plastic_tumbler_1, arat_cup.n.01_2: plastic_tumbler_2}
+  arat_grip_alloy_tube_2_5cm:
+    subscale: grip
+    label: Grip, Displace 2.5-cm alloy tube
+    layout: grip_alloy_tube_2_5cm
+    instances: {arat_box.n.01_1: arat_box, arat_alloy_tube.n.01_1: large_alloy_tube, arat_plank.n.01_1: plank_target_point, arat_plank.n.01_2: plank_starting_point, arat_bolt.n.01_1: bolt_target_point, arat_bolt.n.01_2: bolt_starting_point}
+  arat_grip_alloy_tube_1cm:
+    subscale: grip
+    label: Grip, Displace 1-cm alloy tube
+    layout: grip_alloy_tube_1cm
+    instances: {arat_box.n.01_1: arat_box, arat_alloy_tube.n.01_1: small_alloy_tube, arat_plank.n.01_1: plank_target_point, arat_plank.n.01_2: plank_starting_point, arat_bolt.n.01_1: bolt_target_point, arat_bolt.n.01_2: bolt_starting_point}
+  arat_grip_washer_over_bolt:
+    subscale: grip
+    label: Grip, Put washer over bolt
+    layout: grip_washer_over_bolt
+    instances: {arat_box.n.01_1: arat_box, arat_washer.n.01_1: washer, arat_tin.n.01_1: tin_lid, arat_plank.n.01_1: plank_target_point, arat_bolt.n.01_1: bolt_target_point}
+  arat_pinch_ball_bearing_ring:
+    subscale: pinch
+    label: Pinch, Ball bearing, ring finger and thumb
+    layout: pinch_ball_bearing
+    instances: {arat_box.n.01_1: arat_box, arat_ball_bearing.n.01_1: ball_bearing, arat_tin.n.01_1: tin_lid_1, arat_tin.n.01_2: tin_lid_2}
+  arat_pinch_marble_index:
+    subscale: pinch
+    label: Pinch, Marble, index finger and thumb
+    layout: pinch_marble
+    instances: {arat_box.n.01_1: arat_box, arat_marble.n.01_1: marble, arat_tin.n.01_1: tin_lid_1, arat_tin.n.01_2: tin_lid_2}
+  arat_pinch_ball_bearing_middle:
+    subscale: pinch
+    label: Pinch, Ball bearing, middle finger and thumb
+    layout: pinch_ball_bearing
+    instances: {arat_box.n.01_1: arat_box, arat_ball_bearing.n.01_1: ball_bearing, arat_tin.n.01_1: tin_lid_1, arat_tin.n.01_2: tin_lid_2}
+  arat_pinch_ball_bearing_index:
+    subscale: pinch
+    label: Pinch, Ball bearing, index finger and thumb
+    layout: pinch_ball_bearing
+    instances: {arat_box.n.01_1: arat_box, arat_ball_bearing.n.01_1: ball_bearing, arat_tin.n.01_1: tin_lid_1, arat_tin.n.01_2: tin_lid_2}
+  arat_pinch_marble_ring:
+    subscale: pinch
+    label: Pinch, Marble, ring finger and thumb
+    layout: pinch_marble
+    instances: {arat_box.n.01_1: arat_box, arat_marble.n.01_1: marble, arat_tin.n.01_1: tin_lid_1, arat_tin.n.01_2: tin_lid_2}
+  arat_pinch_marble_middle:
+    subscale: pinch
+    label: Pinch, Marble, middle finger and thumb
+    layout: pinch_marble
+    instances: {arat_box.n.01_1: arat_box, arat_marble.n.01_1: marble, arat_tin.n.01_1: tin_lid_1, arat_tin.n.01_2: tin_lid_2}
+  arat_gross_movement_hand_behind_head:
+    subscale: gross_movement
+    label: Gross movement, Hand behind head
+    layout: gross_movement_mannequin
+    instances: {mannequin.n.02_1: mannequin}
+  arat_gross_movement_hand_top_head:
+    subscale: gross_movement
+    label: Gross movement, Hand on top of head
+    layout: gross_movement_mannequin
+    instances: {mannequin.n.02_1: mannequin}
+  arat_gross_movement_hand_mouth:
+    subscale: gross_movement
+    label: Gross movement, Hand to mouth
+    layout: gross_movement_mannequin
+    instances: {mannequin.n.02_1: mannequin}

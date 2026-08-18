@@ -1,0 +1,8 @@
+nlopt
+numpy<2
+pin
+PyYAML
+scipy
+
+[test]
+pytest
