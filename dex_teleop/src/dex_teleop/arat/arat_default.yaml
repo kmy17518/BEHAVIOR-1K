@@ -1,0 +1,165 @@
+# Default ARAT mobile-manipulator viewport and camera configuration.
+schema_version: 1
+camera_rigs:
+  arat_default:
+    sensor_defaults:
+      modalities: []
+      include_in_obs: false
+      calibration:
+        # Match JoyLo's auxiliary viewport render size.
+        image_width: 256
+        image_height: 256
+        horizontal_aperture: 20.955
+        focal_length: 17.0
+
+    cameras:
+      chest:
+        sensor_name: arat_mobile_chest_camera
+        prim_name: arat_mobile_chest_camera
+        parent: {frame: scene}
+        calibration:
+          # Match JoyLo's main-camera render size.
+          image_width: 1080
+          image_height: 1080
+          horizontal_aperture: 40.0
+        pose:
+          # Near-control-aligned primary view, raised above the hand and offset
+          # toward subject-left to see around the robot's right forearm.
+          position: [-0.6685013461, 0.0915177357, 1.45]
+          orientation_xyzw: [-0.3312225796, 0.4222105567, 0.6639027239, -0.5208291676]
+
+      overview:
+        sensor_name: arat_mobile_overview_camera
+        prim_name: arat_mobile_overview_camera
+        parent: {frame: scene}
+        calibration:
+          image_width: 1080
+          image_height: 1080
+          horizontal_aperture: 40.0
+        pose:
+          # Adapted from JoyLo external_sensor0: centered behind the robot,
+          # two metres high, looking forward and down at 45 degrees.
+          position: [-0.8685013461, -0.1084822643, 2.0156103678]
+          orientation_xyzw: [0.2705931676, -0.2705931676, -0.6532835048, 0.6532835048]
+
+      left_shoulder:
+        sensor_name: arat_left_shoulder_camera
+        prim_name: arat_left_shoulder_camera
+        parent: {frame: scene}
+        pose:
+          # High subject-left oblique view for workspace context and recovery
+          # from occlusions in the primary view (60-degree azimuth, 35 down).
+          position: [-0.2416171131, 0.5654538916, 1.6015079823]
+          orientation_xyzw: [-0.1195093352, 0.4460149108, 0.8567866720, -0.2295752968]
+
+      right_shoulder:
+        sensor_name: arat_right_shoulder_camera
+        prim_name: arat_right_shoulder_camera
+        parent: {frame: scene}
+        pose:
+          # Lower subject-right oblique view for hand-object depth and contact
+          # judgment (60-degree azimuth, 18 degrees down).
+          position: [-0.3042717373, -0.8909394127, 1.3501765125]
+          orientation_xyzw: [-0.5677569555, 0.1521300177, 0.2093890060, -0.7814504088]
+
+      thumb_wrist:
+        sensor_name: arat_wrist_camera_thumb
+        prim_name: right_wrist_camera_thumb_sensor
+        parent: {frame: robot_link, link: right_hand_C_MC}
+        calibration:
+          image_width: 640
+          image_height: 480
+          horizontal_aperture: 20.955
+          # 150-degree rectilinear fallback if the Isaac fisheye schema is unavailable.
+          focal_length: 2.807438
+        lens_model:
+          # Ideal equidistant approximation of DexWild's nominal 220-degree
+          # M32076M20 lens. DexWild does not publish calibrated coefficients.
+          type: opencv_fisheye
+          horizontal_fov_degrees: 220.0
+          distortion_coefficients: [0.0, 0.0, 0.0, 0.0]
+        pose:
+          # Resolved right_hand_C_MC -> USD Camera pose. USD looks along -Z;
+          # wrist_camera_extrinsics.yaml records the matching ROS optical frame.
+          position: [-0.055, 0.072, 0.090]
+          orientation_xyzw: [0.707106781187, -0.707106781187, 0.0, 0.0]
+
+      pinky_wrist:
+        sensor_name: arat_wrist_camera_pinky
+        prim_name: right_wrist_camera_pinky_sensor
+        parent: {frame: robot_link, link: right_hand_C_MC}
+        calibration:
+          image_width: 640
+          image_height: 480
+          horizontal_aperture: 20.955
+          focal_length: 2.807438
+        lens_model:
+          type: opencv_fisheye
+          horizontal_fov_degrees: 220.0
+          distortion_coefficients: [0.0, 0.0, 0.0, 0.0]
+        pose:
+          position: [-0.055, -0.072, 0.090]
+          orientation_xyzw: [0.707106781187, -0.707106781187, 0.0, 0.0]
+
+    layouts:
+      teleop:
+        workspace:
+          # This mirrors JoyLo's GUI_VIEWPORT_ONLY workspace. Content and
+          # Console are restored at runtime only when the EMG display is used.
+          viewport_only: true
+          # Keep JoyLo's fixed 1080x1080 main and 256x256 auxiliary textures.
+          fill_viewports: false
+        viewports:
+          main:
+            main: true
+            camera: chest
+          left_shoulder:
+            window_name: ARAT Left Shoulder
+            camera: left_shoulder
+            dock: {parent: DockSpace, position: left, ratio: 0.25}
+          right_shoulder:
+            window_name: ARAT Right Shoulder
+            camera: right_shoulder
+            dock: {parent: DockSpace, position: right, ratio: 0.20}
+          thumb_wrist:
+            window_name: ARAT Thumb-Side Wrist
+            camera: thumb_wrist
+            dock: {parent: right_shoulder, position: bottom, ratio: 0.5}
+          pinky_wrist:
+            window_name: ARAT Pinky-Side Wrist
+            camera: pinky_wrist
+            dock: {parent: thumb_wrist, position: bottom, ratio: 0.5}
+        toggles:
+          - key: B
+            viewport: main
+            cameras: [chest, overview]
+        panels:
+          emg:
+            dock: {parent: Content, position: same, ratio: 0.5}
+          decoder:
+            dock: {parent: Content, position: same, ratio: 0.5}
+
+      view_only:
+        workspace:
+          viewport_only: true
+          fill_viewports: false
+        viewports:
+          main:
+            main: true
+            camera: chest
+          left_shoulder:
+            window_name: ARAT Left Shoulder
+            camera: left_shoulder
+            dock: {parent: DockSpace, position: left, ratio: 0.25}
+          right_shoulder:
+            window_name: ARAT Right Shoulder
+            camera: right_shoulder
+            dock: {parent: DockSpace, position: right, ratio: 0.20}
+          right_lower:
+            window_name: ARAT Right Lower (Robot Required)
+            empty: true
+            dock: {parent: right_shoulder, position: bottom, ratio: 0.5}
+        toggles:
+          - key: B
+            viewport: main
+            cameras: [chest, overview]

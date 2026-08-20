@@ -93,6 +93,33 @@ class SharpaAdapterConfig:
     orientation_resync_s: float = 2.0
 
 
+@dataclass(frozen=True)
+class WristActionDiagnostics:
+    """One wrist sample at the important stages of the OmniGibson action path."""
+
+    frame_timestamp: float
+    input_quaternion_xyzw: np.ndarray
+    gated_quaternion_xyzw: np.ndarray
+    target_quaternion_xyzw: np.ndarray
+    target_position: np.ndarray
+    target_axis_angle: np.ndarray
+    filtered_position: np.ndarray
+    filtered_axis_angle: np.ndarray
+    eef_position_before: np.ndarray
+    eef_quaternion_before_xyzw: np.ndarray
+    gate_decision: str
+    gate_reason: str | None
+    hemisphere_corrected: bool
+
+
+@dataclass(frozen=True)
+class _WristGateResult:
+    quaternion_xyzw: np.ndarray
+    decision: str
+    reason: str | None
+    hemisphere_corrected: bool
+
+
 class SharpaActionAdapter:
     """Map source-independent wrist + named Sharpa joints to one OG action."""
 
@@ -105,6 +132,8 @@ class SharpaActionAdapter:
         get_hand_profile("sharpa")
         if config.control_hz <= 0:
             raise ValueError("control_hz must be positive")
+        if not math.isfinite(config.position_sensitivity) or config.position_sensitivity <= 0:
+            raise ValueError("position_sensitivity must be finite and positive")
         if not 0.0 < config.finger_target_scale <= 1.0:
             raise ValueError("finger_target_scale must be in (0, 1]")
         self.robot = robot
@@ -137,6 +166,7 @@ class SharpaActionAdapter:
         self._accepted_wrist_timestamp: float | None = None
         self._accepted_wrist_history: deque[tuple[float, np.ndarray]] = deque()
         self._rejection_started: float | None = None
+        self._last_wrist_diagnostics: WristActionDiagnostics | None = None
         self.request_anchor()
 
     def request_anchor(self) -> None:
@@ -147,6 +177,7 @@ class SharpaActionAdapter:
         self._accepted_wrist_timestamp = None
         self._accepted_wrist_history = deque()
         self._rejection_started = None
+        self._last_wrist_diagnostics = None
         base_position, base_quaternion = self.robot.get_position_orientation()
         eef_position, eef_quaternion = self.robot.eef_links[self.arm_name].get_position_orientation()
         relative_position, relative_quaternion = T.relative_pose_transform(
@@ -196,7 +227,8 @@ class SharpaActionAdapter:
             self._position_offset = eef_relative_position.cpu().numpy() - wrist_position_robot
         target_position = self._clamp_position(wrist_position_robot + self._position_offset)
 
-        wrist_quaternion_xyzw = self._gate_wrist_orientation(frame.wrist_quaternion_xyzw, frame.timestamp)
+        gate = self._gate_wrist_orientation(frame.wrist_quaternion_xyzw, frame.timestamp)
+        wrist_quaternion_xyzw = gate.quaternion_xyzw
         tracking_to_world_wxyz = _xyzw_to_wxyz(tracking_to_world)
         wrist_world_wxyz = _quat_multiply_wxyz(tracking_to_world_wxyz, _xyzw_to_wxyz(wrist_quaternion_xyzw))
         wrist_robot_wxyz = _quat_multiply_wxyz(
@@ -230,9 +262,24 @@ class SharpaActionAdapter:
             ]
         )
         filtered = self.safety.apply(target, logger=LOGGER)
+        self._last_wrist_diagnostics = WristActionDiagnostics(
+            frame_timestamp=frame.timestamp,
+            input_quaternion_xyzw=np.asarray(frame.wrist_quaternion_xyzw, dtype=np.float64).copy(),
+            gated_quaternion_xyzw=wrist_quaternion_xyzw.copy(),
+            target_quaternion_xyzw=target_quaternion_xyzw.copy(),
+            target_position=target_position.copy(),
+            target_axis_angle=target[3:6].copy(),
+            filtered_position=filtered[:3].copy(),
+            filtered_axis_angle=filtered[3:6].copy(),
+            eef_position_before=eef_relative_position.cpu().numpy().copy(),
+            eef_quaternion_before_xyzw=eef_relative_quaternion.cpu().numpy().copy(),
+            gate_decision=gate.decision,
+            gate_reason=gate.reason,
+            hemisphere_corrected=gate.hemisphere_corrected,
+        )
         return th.as_tensor(filtered, dtype=th.float32)
 
-    def _gate_wrist_orientation(self, quaternion_xyzw: np.ndarray, timestamp: float) -> np.ndarray:
+    def _gate_wrist_orientation(self, quaternion_xyzw: np.ndarray, timestamp: float) -> _WristGateResult:
         """Reject impossibly fast tracked-wrist rotations and hold the last good orientation.
 
         Hand trackers flip the estimated palm orientation by ~180 degrees on closed-fist or
@@ -246,13 +293,15 @@ class SharpaActionAdapter:
         """
         quaternion = np.asarray(quaternion_xyzw, dtype=np.float64)
         accepted = self._accepted_wrist_quaternion
+        hemisphere_corrected = False
         if accepted is not None and float(np.dot(quaternion, accepted)) < 0.0:
             # Same rotation, opposite hemisphere: keep the stream sign-continuous so the
             # downstream axis-angle representation cannot jump across a 2*pi wrap.
             quaternion = -quaternion
+            hemisphere_corrected = True
         if accepted is None:
             self._accept_wrist(quaternion, timestamp, reseed=True)
-            return quaternion
+            return _WristGateResult(quaternion, "anchored", None, hemisphere_corrected)
 
         rejection_reason = None
         frame_gap = min(max(timestamp - self._accepted_wrist_timestamp, 0.0), 0.15)
@@ -285,7 +334,8 @@ class SharpaActionAdapter:
 
         if rejection_reason is None:
             self._accept_wrist(quaternion, timestamp)
-            return quaternion
+            decision = "accepted_sign_corrected" if hemisphere_corrected else "accepted"
+            return _WristGateResult(quaternion, decision, None, hemisphere_corrected)
         if self._rejection_started is None:
             self._rejection_started = timestamp
             LOGGER.warning("Tracked wrist orientation %s; holding the last orientation", rejection_reason)
@@ -296,8 +346,8 @@ class SharpaActionAdapter:
                 rejection_reason,
             )
             self._accept_wrist(quaternion, timestamp, reseed=True)
-            return quaternion
-        return accepted.copy()
+            return _WristGateResult(quaternion, "resynchronized", rejection_reason, hemisphere_corrected)
+        return _WristGateResult(accepted.copy(), "held", rejection_reason, hemisphere_corrected)
 
     def _accept_wrist(self, quaternion: np.ndarray, timestamp: float, reseed: bool = False) -> None:
         self._accepted_wrist_quaternion = quaternion.copy()
@@ -315,6 +365,29 @@ class SharpaActionAdapter:
     def last_live_fingers(self) -> dict[str, float] | None:
         """The most recent unfrozen finger targets by joint name, set by :meth:`action`."""
         return None if self._last_live_fingers is None else dict(self._last_live_fingers)
+
+    @property
+    def last_wrist_diagnostics(self) -> WristActionDiagnostics | None:
+        """The most recent wrist transform and gate outcome, for diagnostic tooling."""
+
+        diagnostics = self._last_wrist_diagnostics
+        if diagnostics is None:
+            return None
+        return WristActionDiagnostics(
+            frame_timestamp=diagnostics.frame_timestamp,
+            input_quaternion_xyzw=diagnostics.input_quaternion_xyzw.copy(),
+            gated_quaternion_xyzw=diagnostics.gated_quaternion_xyzw.copy(),
+            target_quaternion_xyzw=diagnostics.target_quaternion_xyzw.copy(),
+            target_position=diagnostics.target_position.copy(),
+            target_axis_angle=diagnostics.target_axis_angle.copy(),
+            filtered_position=diagnostics.filtered_position.copy(),
+            filtered_axis_angle=diagnostics.filtered_axis_angle.copy(),
+            eef_position_before=diagnostics.eef_position_before.copy(),
+            eef_quaternion_before_xyzw=diagnostics.eef_quaternion_before_xyzw.copy(),
+            gate_decision=diagnostics.gate_decision,
+            gate_reason=diagnostics.gate_reason,
+            hemisphere_corrected=diagnostics.hemisphere_corrected,
+        )
 
     @property
     def measured_fingers(self) -> dict[str, float]:

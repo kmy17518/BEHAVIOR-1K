@@ -32,8 +32,9 @@ class FakeRobot:
         return th.arange(29, dtype=th.float32) / 100.0
 
 
-def snapshot(flexion=0.6, wrist_quat=None, timestamp=0.0):
+def snapshot(flexion=0.6, wrist_quat=None, wrist_position=None, timestamp=0.0):
     wrist_quat = np.array([0.0, 0.0, 0.0, 1.0]) if wrist_quat is None else np.asarray(wrist_quat, dtype=np.float64)
+    wrist_position = np.zeros(3) if wrist_position is None else np.asarray(wrist_position, dtype=np.float64)
     return SimpleNamespace(
         command=SimpleNamespace(
             hand_model="sharpa",
@@ -41,7 +42,7 @@ def snapshot(flexion=0.6, wrist_quat=None, timestamp=0.0):
             joint_names=SHARPA_ACTION_JOINTS,
             joint_positions=np.full(len(SHARPA_ACTION_JOINTS), flexion),
         ),
-        frame=SimpleNamespace(timestamp=timestamp, wrist_position=np.zeros(3), wrist_quaternion_xyzw=wrist_quat),
+        frame=SimpleNamespace(timestamp=timestamp, wrist_position=wrist_position, wrist_quaternion_xyzw=wrist_quat),
     )
 
 
@@ -73,6 +74,34 @@ class Clock:
 
 def finger_slice(action):
     return {name: float(action[6 + i]) for i, name in enumerate(SHARPA_ACTION_JOINTS)}
+
+
+def test_tracking_yaw_180_inverts_both_horizontal_translation_axes():
+    config = SharpaAdapterConfig(
+        control_hz=30.0,
+        tracking_to_world_quaternion_xyzw=tuple(rotz(180)),
+        maximum_position_step=1.0,
+    )
+    adapter = make_adapter(config)
+    anchored = adapter.action(snapshot(wrist_position=[0.0, 0.0, 0.0], timestamp=0.0))
+    moved = adapter.action(snapshot(wrist_position=[0.1, 0.2, 0.0], timestamp=0.1))
+
+    assert np.allclose(moved[:3] - anchored[:3], [-0.1, -0.2, 0.0], atol=1e-6)
+
+
+def test_position_sensitivity_scales_translation_about_anchor():
+    config = SharpaAdapterConfig(control_hz=30.0, position_sensitivity=1.5, maximum_position_step=1.0)
+    adapter = make_adapter(config)
+    anchored = adapter.action(snapshot(wrist_position=[0.0, 0.0, 0.0], timestamp=0.0))
+    moved = adapter.action(snapshot(wrist_position=[0.1, -0.1, 0.05], timestamp=0.1))
+
+    assert np.allclose(moved[:3] - anchored[:3], [0.15, -0.15, 0.075], atol=1e-6)
+
+
+@pytest.mark.parametrize("position_sensitivity", [0.0, -1.0, math.inf, math.nan])
+def test_position_sensitivity_must_be_finite_and_positive(position_sensitivity):
+    with pytest.raises(ValueError, match="position_sensitivity"):
+        make_adapter(SharpaAdapterConfig(control_hz=30.0, position_sensitivity=position_sensitivity))
 
 
 def test_action_passes_live_fingers_through_without_freeze():
@@ -119,6 +148,23 @@ def test_wrist_gate_tracks_human_steps_and_holds_a_flip():
     assert clock.act(200) == pytest.approx(math.radians(20), abs=1e-3)
     # The estimate returns near the held orientation: tracking resumes immediately.
     assert clock.act(25) == pytest.approx(math.radians(25), abs=1e-3)
+
+
+def test_action_exposes_wrist_gate_and_command_diagnostics():
+    adapter = make_adapter()
+    clock = Clock(adapter)
+    clock.act(0)
+    clock.act(20)
+    clock.act(200)
+
+    diagnostics = adapter.last_wrist_diagnostics
+    assert diagnostics is not None
+    assert diagnostics.gate_decision == "held"
+    assert "jumped" in diagnostics.gate_reason
+    assert diagnostics.target_position.shape == (3,)
+    assert diagnostics.target_quaternion_xyzw.shape == (4,)
+    assert diagnostics.target_axis_angle.shape == (3,)
+    assert diagnostics.filtered_axis_angle.shape == (3,)
 
 
 def test_wrist_gate_resyncs_when_the_new_orientation_persists():

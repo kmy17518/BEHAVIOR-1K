@@ -59,13 +59,15 @@ def test_default_video_path_includes_episode_id(tmp_path):
     assert default_output_path(tmp_path / "demo.hdf5", 4) == tmp_path / "demo_demo_4.mp4"
 
 
-def test_replay_camera_configs_enable_all_three_rgb_observations():
-    cameras = build_replay_camera_configs()
+@pytest.mark.parametrize("camera_rig_name", ["arat_default", "arat_sharpa_v1"])
+def test_replay_camera_configs_enable_all_four_rgb_observations(camera_rig_name):
+    cameras = build_replay_camera_configs(camera_rig_name)
 
     assert {camera["name"] for camera in cameras} == {
         "arat_left_shoulder_camera",
         "arat_right_shoulder_camera",
-        "arat_wrist_camera",
+        "arat_wrist_camera_thumb",
+        "arat_wrist_camera_pinky",
     }
     assert all(camera["modalities"] == ["rgb"] for camera in cameras)
     assert all(camera["include_in_obs"] is True for camera in cameras)

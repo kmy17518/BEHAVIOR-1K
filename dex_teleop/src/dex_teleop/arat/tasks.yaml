@@ -1,4 +1,5 @@
 scene: arat_base
+camera_rig: arat_default
 placeholder_goals: false
 subscales:
   grasp:

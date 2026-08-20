@@ -52,7 +52,7 @@ class TrackingRetargetingWorker:
         with self._lock:
             latest = self._latest
         if latest is not None and maximum_age is not None:
-            age = time.monotonic() - latest.frame.timestamp
+            age = time.monotonic() - latest.frame.receipt_timestamp
             if age > maximum_age:
                 raise SourceUnavailableError(
                     f"{latest.frame.source} hand frame is stale ({age:.3f}s > {maximum_age:.3f}s)"

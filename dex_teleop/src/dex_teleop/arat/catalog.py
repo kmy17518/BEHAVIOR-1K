@@ -17,6 +17,7 @@ class AratTask:
     subscale: str
     label: str
     layout: str
+    camera_rig: str
     instances: dict[str, str]
 
 
@@ -29,12 +30,14 @@ class AratTaskCatalog:
             raise ValueError("ARAT task catalog must explicitly state whether its goals are placeholders")
         self.scene = str(raw["scene"])
         self.placeholder_goals = placeholder_goals
+        default_camera_rig = str(raw["camera_rig"])
         self.tasks = {
             activity: AratTask(
                 activity=activity,
                 subscale=str(data["subscale"]),
                 label=str(data["label"]),
                 layout=str(data["layout"]),
+                camera_rig=str(data.get("camera_rig", default_camera_rig)),
                 instances=dict(data["instances"]),
             )
             for activity, data in raw["tasks"].items()

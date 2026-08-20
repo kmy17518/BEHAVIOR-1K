@@ -42,7 +42,12 @@ class Handedness(str, Enum):
 
 @dataclass(frozen=True)
 class HandFrame:
-    """One source-independent hand sample in a right-handed world frame."""
+    """One source-independent hand sample in a right-handed world frame.
+
+    ``timestamp`` is the sample time in the desktop monotonic clock domain.
+    Network sources may additionally retain their raw source timestamp and the
+    desktop time at which the complete sample became available.
+    """
 
     timestamp: float
     handedness: Handedness
@@ -51,10 +56,20 @@ class HandFrame:
     wrist_quaternion_xyzw: np.ndarray
     source: str
     confidence: float | None = None
+    receipt_timestamp: float | None = None
+    source_timestamp_ns: int | None = None
+    source_frame_id: int | None = None
 
     def __post_init__(self) -> None:
         if not np.isfinite(self.timestamp):
             raise ValueError("HandFrame timestamp must be finite")
+        receipt_timestamp = self.timestamp if self.receipt_timestamp is None else self.receipt_timestamp
+        if not np.isfinite(receipt_timestamp):
+            raise ValueError("HandFrame receipt timestamp must be finite")
+        if self.source_timestamp_ns is not None and self.source_timestamp_ns < 0:
+            raise ValueError("HandFrame source timestamp must be non-negative")
+        if self.source_frame_id is not None and self.source_frame_id < 0:
+            raise ValueError("HandFrame source frame ID must be non-negative")
         joint_copy = {
             name: np.asarray(position, dtype=np.float64).reshape(3).copy()
             for name, position in self.joints.items()
@@ -76,6 +91,7 @@ class HandFrame:
         object.__setattr__(self, "joints", MappingProxyType(joint_copy))
         object.__setattr__(self, "wrist_position", wrist_position)
         object.__setattr__(self, "wrist_quaternion_xyzw", wrist_quaternion / norm)
+        object.__setattr__(self, "receipt_timestamp", float(receipt_timestamp))
 
     def mediapipe_landmarks(self) -> np.ndarray:
         """Return the required landmarks in the standard MediaPipe order."""

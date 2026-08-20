@@ -1,0 +1,106 @@
+schema_version: 1
+camera_rigs:
+  arat_sharpa_v1:
+    sensor_defaults:
+      modalities: []
+      include_in_obs: false
+      calibration:
+        image_width: 640
+        image_height: 480
+        horizontal_aperture: 20.955
+        focal_length: 17.0
+
+    cameras:
+      left_shoulder:
+        sensor_name: arat_left_shoulder_camera
+        prim_name: arat_left_shoulder_camera
+        parent: {frame: scene}
+        pose:
+          position: [-0.6387919357, 0.9421831684, 1.8487674722]
+          orientation_xyzw: [-0.1164232160, 0.4585405560, 0.8539201738, -0.2168098939]
+
+      right_shoulder:
+        sensor_name: arat_right_shoulder_camera
+        prim_name: arat_right_shoulder_camera
+        parent: {frame: scene}
+        pose:
+          position: [-0.6387919357, -1.1591476970, 1.8487674722]
+          orientation_xyzw: [0.4585405560, -0.1164232160, -0.2168098939, 0.8539201738]
+
+      thumb_wrist:
+        sensor_name: arat_wrist_camera_thumb
+        prim_name: right_wrist_camera_thumb_sensor
+        parent: {frame: robot_link, link: right_hand_C_MC}
+        calibration:
+          # Rectilinear fallback; Isaac Sim receives the fisheye model below.
+          focal_length: 2.807438
+        lens_model:
+          type: opencv_fisheye
+          horizontal_fov_degrees: 220.0
+          distortion_coefficients: [0.0, 0.0, 0.0, 0.0]
+        pose:
+          position: [-0.055, 0.072, 0.090]
+          orientation_xyzw: [0.707106781187, -0.707106781187, 0.0, 0.0]
+
+      pinky_wrist:
+        sensor_name: arat_wrist_camera_pinky
+        prim_name: right_wrist_camera_pinky_sensor
+        parent: {frame: robot_link, link: right_hand_C_MC}
+        calibration:
+          focal_length: 2.807438
+        lens_model:
+          type: opencv_fisheye
+          horizontal_fov_degrees: 220.0
+          distortion_coefficients: [0.0, 0.0, 0.0, 0.0]
+        pose:
+          position: [-0.055, -0.072, 0.090]
+          orientation_xyzw: [0.707106781187, -0.707106781187, 0.0, 0.0]
+
+      overview:
+        sensor_name: arat_overview_camera
+        prim_name: arat_overview_camera
+        parent: {frame: scene}
+        pose:
+          position: [-1.0455796193, 0.4291464976, 1.5382929949]
+          orientation_xyzw: [-0.2311352166, 0.4127836196, 0.7687090195, -0.4304330824]
+
+    layouts:
+      teleop:
+        viewports:
+          main:
+            main: true
+            camera: left_shoulder
+          right_shoulder:
+            window_name: ARAT Right Shoulder
+            camera: right_shoulder
+            dock: {parent: DockSpace, position: left, ratio: 0.25}
+          thumb_wrist:
+            window_name: ARAT Thumb-Side Wrist
+            camera: thumb_wrist
+            dock: {parent: right_shoulder, position: bottom, ratio: 0.5}
+          pinky_wrist:
+            window_name: ARAT Pinky-Side Wrist
+            camera: pinky_wrist
+            dock: {parent: thumb_wrist, position: bottom, ratio: 0.5}
+        toggles:
+          - key: B
+            viewport: main
+            cameras: [left_shoulder, overview]
+
+      view_only:
+        viewports:
+          main:
+            main: true
+            camera: overview
+          left_shoulder:
+            window_name: ARAT Left Shoulder
+            camera: left_shoulder
+            dock: {parent: DockSpace, position: left, ratio: 0.25}
+          right_shoulder:
+            window_name: ARAT Right Shoulder
+            camera: right_shoulder
+            dock: {parent: DockSpace, position: right, ratio: 0.25}
+        toggles:
+          - key: B
+            viewport: main
+            cameras: [overview, left_shoulder, right_shoulder]

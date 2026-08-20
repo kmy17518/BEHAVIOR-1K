@@ -35,8 +35,36 @@ def get_task_scene_path(task: AratTask) -> Path:
     return _SCENE_ROOT / f"{SCENE_MODEL}_task_{task.activity}_0_0_template.json"
 
 
+def get_task_tro_path(task: AratTask) -> Path:
+    """Return the task-relevant-object state file for ``task``."""
+
+    stem = f"{SCENE_MODEL}_task_{task.activity}"
+    return _SCENE_ROOT / f"{stem}_instances" / f"{stem}_0_0_template-tro_state.json"
+
+
+def get_task_tro_data(task: AratTask) -> dict:
+    """Load and validate the task's pose-bearing TRO state."""
+
+    tro_path = get_task_tro_path(task)
+    try:
+        tro = json.loads(tro_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as error:
+        raise FileNotFoundError(f"Missing ARAT TRO state: {tro_path}") from error
+
+    try:
+        poses = tro["robot_poses"]["robot"]
+    except (KeyError, TypeError) as error:
+        raise ValueError(f"Malformed ARAT robot poses in TRO state: {tro_path}") from error
+    if not isinstance(poses, list) or len(poses) != 1:
+        raise ValueError(f"{tro_path} must define exactly one generic robot pose")
+    pose = poses[0]
+    if not isinstance(pose, dict) or len(pose.get("position", ())) != 3 or len(pose.get("orientation", ())) != 4:
+        raise ValueError(f"Malformed ARAT robot pose in TRO state: {tro_path}")
+    return tro
+
+
 def get_task_scene_data(task: AratTask, *, include_task_metadata: bool = False) -> dict:
-    """Load a task scene, optionally embedding its explicit BDDL object map."""
+    """Load a task scene, optionally embedding its BDDL map and TRO robot poses."""
 
     scene_path = get_task_scene_path(task)
     try:
@@ -75,6 +103,7 @@ def build_task_metadata(task: AratTask) -> dict:
         "activity": task.activity,
         "asset_version": 1,
         "inst_to_name": inst_to_name,
+        "robot_poses": get_task_tro_data(task)["robot_poses"],
     }
 
 
@@ -100,8 +129,10 @@ def validate_runtime_assets(tasks: Iterable[AratTask]) -> None:
 
     for task in tasks:
         scene_path = get_task_scene_path(task)
-        if not scene_path.is_file():
-            missing.append(str(scene_path))
+        tro_path = get_task_tro_path(task)
+        missing_task_assets = [path for path in (scene_path, tro_path) if not path.is_file()]
+        if missing_task_assets:
+            missing.extend(str(path) for path in missing_task_assets)
             continue
         scene = json.loads(scene_path.read_text(encoding="utf-8"))
         init_info = scene.get("init_info", {})
@@ -131,6 +162,7 @@ def validate_runtime_assets(tasks: Iterable[AratTask]) -> None:
                 raise ValueError(f"{scene_path} must contain only mannequin/nphsfp")
         elif {"table", "arat_box"}.difference(names):
             raise ValueError(f"{scene_path} is missing the resized breakfast table or articulated ARAT box")
+        get_task_tro_data(task)
         build_task_metadata(task)
 
     if missing:

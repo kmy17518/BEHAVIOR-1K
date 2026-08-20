@@ -30,6 +30,20 @@ There is no runtime import, path lookup, or package dependency on an external
 AnyDexRetarget checkout. Solver errors and unavailable/stale selected tracking
 sources are reported; they do not trigger another source or command fallback.
 
+HTS wrist and landmark lines carrying the same source frame ID (`f`) and
+monotonic nanosecond timestamp (`t`) are assembled as one hand pose. The raw
+values are retained on `HandFrame.source_frame_id` and
+`HandFrame.source_timestamp_ns`; `HandFrame.timestamp` maps the HTS clock into
+the desktop monotonic clock domain, while `HandFrame.receipt_timestamp` records
+when the complete pair became available on the desktop. Input freshness uses
+receipt time rather than the aligned capture time. Every hand record must carry
+both metadata fields, and the wrist and landmarks metadata must match exactly;
+missing or inconsistent metadata fails the HTS source instead of falling back
+to arrival-order pairing. A UDP datagram must contain the complete pair. TCP
+may split the two newline-delimited records across reads, but a mismatched pair
+or a connection that stalls or closes mid-pair also fails the source. Enable
+header/debug metadata in the HTS app.
+
 ## Installation
 
 Install the package and its direct retargeting dependencies through the
@@ -72,6 +86,7 @@ python dex_teleop/scripts/launch_og.py \
   --source hts \
   --hand-model sharpa \
   --auto-anchor \
+  --record-hand-poses \
   --recording-path outputs/arat_grasp_block_10cm.hdf5
 ```
 
@@ -84,6 +99,128 @@ the current episode before resetting, and exiting normally or with Ctrl+C
 flushes and closes the current recording. A subscale run creates a separate
 default HDF5 file for each activity so every file retains the correct task and
 scene metadata.
+
+Wrist translation uses `1.5x` sensitivity by default, measured from the pose at
+engagement. Use `--position-sensitivity 1.0` for one-to-one motion, or a larger
+finite positive value if more gain is needed. The gain applies to all three
+translation axes and does not expand the Franka workspace.
+
+The Franka starts in the `extended` reset pose (Deoxys tabletop golden joints).
+Pass `--reset-pose compact` for the OmniGibson `franka.yaml` ready pose.
+
+Press `T` to show or hide the post-filter commanded-target marker and `E` to
+show or hide the measured EEF marker while teleoperating; no visualization flag
+is required. Each marker combines three pose-oriented wrist circles with red X,
+green Y, and blue Z axes. The commanded circles and origin are magenta; the
+measured circles and origin are cyan. Their connecting line is green below 2 cm
+of position error, amber from 2-5 cm, and red above 5 cm. Pass
+`--visualize-arm-markers` to start both frames visible instead of hidden. The old
+`--visualize-arm-workspace` option remains as an alias, but no workspace geometry
+is generated.
+
+Pass `--record-hand-poses` to add one pre-retargeting human hand sample for
+every recorded action under `human_hand_pose/demo_N`. The canonical
+`wrist_position`, `wrist_quaternion_xyzw`, and `landmarks` datasets use the
+source-independent right-handed world frame; landmarks have shape
+`(steps, 21, 3)` in the `landmark_names` order stored on the group. HTS also
+stores its source-native Unity values in `raw_wrist_position_unity`,
+`raw_wrist_quaternion_xyzw`, and `raw_landmarks_unity`. Timestamps, source frame
+IDs, confidence, and a `raw_available` mask are recorded alongside them. The
+flag is opt-in, so recordings made without it retain the existing layout.
+
+### Synchronized OYMotion EMG
+
+The Synchroni SDK stays an external dependency; it is not copied into this
+repository or imported into the Isaac Sim process. `launch_og.py` starts a
+clean `behavior_dex` Python sidecar that owns Bluetooth and the SDK event
+loops, writes native-rate EMG to a temporary HDF5 file, and sends only a
+bounded waveform preview to Kit over localhost UDP. Install the SDK and its
+dependencies into `behavior_dex`, for example from the adjacent checkout:
+
+```bash
+conda run -n behavior_dex python -m pip install -e ../synchroni-sensor-sdk
+```
+
+Alternatively, install `bleak>=3.0.2` and `flatbuffers>=25.0.0` in that
+environment and pass `--emg-sdk-path ../synchroni-sensor-sdk`. Start one
+single-task recording with:
+
+```bash
+conda run -n behavior_dex python dex_teleop/scripts/launch_og.py \
+  --task arat_grasp_block_10cm \
+  --source hts \
+  --auto-anchor \
+  --emg \
+  --emg-device D8:71:4D:8D:99:92 \
+  --emg-adapter hci0 \
+  --emg-sdk-path ../synchroni-sensor-sdk \
+  --recording-path outputs/arat_grasp_block_10cm_emg.hdf5
+```
+
+If exactly one supported `OY*`, `Sync*`, or `gForce*` device is visible, it is
+selected automatically. Use `--emg-device` with a name substring or Bluetooth
+address when multiple bands are present. On Linux, `--emg-adapter` selects the
+BlueZ adapter; it defaults to `hci0`. This workstation's OYWW1000 is
+`D8:71:4D:8D:99:92` and should use `hci0`. `--emg` also enables hand-pose
+recording. The native `omni.ui.Plot` monitor is docked to the right of the
+left-shoulder viewport in the first row and refreshed at 10 Hz without
+downsampling the saved data. Each channel row shows the latest electrode
+impedance using the SDK
+example's contact colors: green through 500 kΩ, orange through 999 kΩ, and red
+above 999 kΩ. Use `--no-emg-display` to record without the dock. No PyQt or
+Matplotlib GUI is launched.
+
+Dock placement is camera-rig-specific. With the default `arat_default` rig,
+the EMG monitor is added to the
+lower `Content` / `Console` tab stack, so it can be selected by clicking its
+`OYMotion EMG` tab. The legacy `arat_sharpa_v1` rig retains the placement
+described above the left-shoulder viewport.
+
+The launcher explicitly configures and verifies every firmware filter before
+starting notifications. Its default is the 0.5 Hz HPF on, 80 Hz LPF on, 60 Hz
+notch on, and 50 Hz notch off. Use `--no-emg-hpf`, `--no-emg-lpf`, or
+`--emg-notch {off,50,60,both}` to select a different reproducible policy. The
+verified aggregate state is printed at startup and stored as
+`/emg.attrs['filter_configuration']`; acquisition fails instead of silently
+continuing if the wristband reports a different state.
+
+Pass `--display decoder` (or the existing `--visualize-decoder` spelling) to
+load the sibling `emg2pose` checkout and its
+`checkpoints/regression_vemg2pose.ckpt`, decode the same EMG samples being
+recorded, and render the UmeTrack hand mesh. In the mobile-manipulator rig,
+`EMG2Pose Hand` is another clickable tab in the lower `Content` / `Console`
+stack; the existing rig retains its prior placement below the waveform monitor.
+The model needs about 5.9 seconds of source history before its first pose.
+Inference runs in the EMG sidecar, so it does not create a second BLE
+connection. Override the defaults with `--emg2pose-root`,
+`--emg2pose-checkpoint`, or `--emg2pose-device cpu` as needed. Decoding targets
+5 Hz by default. `--emg2pose-inference-hz 10` is a conservative faster setting
+on CUDA; the 32-sample, 500 Hz wristband callbacks cap meaningful fresh-window
+updates at about 15.6 Hz. The decoded mesh is a live diagnostic; the lossless
+native EMG remains the recorded source of truth.
+
+The combined recording contains:
+
+- `/data/demo_N/action`: the exact command passed to `env.step` by the existing
+  OmniGibson wrapper.
+- `/human_hand_pose/demo_N`: the Quest pose selected for each action, including
+  integer `timestamp_monotonic_ns` and `receipt_monotonic_ns` values.
+- `/action_timing/demo_N`: desktop monotonic timestamps immediately before and
+  after each `env.step`, plus simulator time before and after the step.
+- `/emg/samples`: converted microvolt values, raw ADC values, SDK sample index
+  and timestamp, loss flags, and an estimated desktop monotonic timestamp at
+  the wristband's native sample rate. `/emg/batches` preserves callback receive
+  time and per-channel diagnostics.
+- `/synchronization/demo_N`: half-open EMG row ranges for the episode and for
+  every action row.
+
+Linux `time.monotonic_ns` is shared across the launcher and sidecar processes.
+The Synchroni SDK timestamp is device-stream-relative rather than a desktop
+epoch, so the recorder maps SDK sample indices at the advertised sample rate
+to the callback having the smallest observed receive delay. It retains the raw
+SDK and callback timestamps so a different clock model can be fit offline.
+This is host-clock synchronization and includes unknown Bluetooth transport
+latency; it is not hardware-trigger or PTP synchronization.
 
 Each action also records an evaluation trace under `evaluation/demo_N/steps`.
 The trace expands every BDDL goal condition into its natural-language text and
@@ -104,7 +241,8 @@ condition. Unsatisfied conditions are red and satisfied conditions are green;
 the terminal prints the satisfied-condition count whenever it changes.
 
 Replay a recording and render the recorded simulator states from the left
-shoulder, right shoulder, and wrist cameras into one MP4:
+shoulder, right shoulder, thumb-side wrist, and pinky-side wrist cameras into
+one MP4:
 
 ```bash
 python dex_teleop/scripts/replay_data.py \
@@ -121,7 +259,7 @@ non-interactive selection, `--list-episodes` to only inspect the recording, or
 ARAT task from the HDF5 metadata; an optional `--task` can assert the expected
 activity.
 
-`--evaluation-overlay` adds a per-frame dashboard below the three cameras. It
+`--evaluation-overlay` adds a per-frame dashboard below the four cameras. It
 shows every BDDL predicate as PASS/FAIL and explains the provisional ARAT score
 with each applicable scoring gate, its threshold and measured evidence, current
 contacts and hold/release state, and milestone events. `--log-eval` is retained
@@ -134,15 +272,57 @@ rows for that task remains fixed throughout the video. Rows are separated by
 an applicable condition cannot be decided yet, such as release quality before
 a release has occurred.
 The evaluation dashboard retains its original 600-pixel height and uses text
-scaled to 1.5 times the initial size; the three camera images retain their
+scaled to 1.5 times the initial size; the four camera images retain their
 original resolution. Individual BDDL goal rows use the same regular-weight
 body font as the ARAT calculation rows.
 
-The normal launcher uses the external left-shoulder camera as its large main
-view. The external right-shoulder camera and the camera rigidly mounted to the
-Franka `panda_link7` wrist are stacked as small views in a left-side column.
-The wrist camera is mounted on the dorsal side of the wrist / hand interface
-and pitched toward the palm so the fingertips and target remain visible.
+The default launcher uses the chest camera as its large main view, with the
+left- and right-shoulder cameras docked on their corresponding sides. The
+thumb- and pinky-side cameras are rigidly mounted to the Sharpa palm base and
+stacked below the right-shoulder view. They converge toward the fingertips and
+nearby manipulation workspace. Press `B` to toggle the main viewport between
+the chest and overview cameras. The legacy `arat_sharpa_v1` rig remains
+selectable with `--camera-rig arat_sharpa_v1`.
+
+Camera poses, calibration, viewport docking, panel docking, and toggle cycles
+are defined in packaged YAML files under `src/dex_teleop/arat`. The legacy rig
+remains in `camera_rigs.yaml`; the default mobile-manipulator layout is defined
+in `arat_default.yaml` under the `arat_default` rig ID.
+`arat/tasks.yaml` selects a default `camera_rig`, an individual task may
+override that field, and `--camera-rig` may override it for one launch. A
+camera's `parent.frame` is either `scene` for a fixed world camera or
+`robot_link` with a `link` name for a rigidly mounted camera. Each `teleop` or
+`view_only` layout maps named viewports to cameras and describes auxiliary
+docking. A toggle entry specifies one keyboard `key`, the target `viewport`,
+and the ordered `cameras` to cycle; its first camera must be that viewport's
+initial camera.
+
+Launch the default R1-Pro-style mobile-manipulator layout with:
+
+```bash
+python dex_teleop/scripts/launch_og.py \
+  --task arat_grasp_block_5cm
+```
+
+Its main viewport starts from above the reset hand, centered horizontally on
+the ARAT toolbox and looking downward like a standing operator looking at
+their hands, with the Franka acting as the robot's right arm. Press `B` to
+toggle that viewport to the farther JoyLo-style
+overview and back. The left column contains the left-shoulder view. The right
+column contains the right-shoulder view above the robot-linked thumb- and
+pinky-side wrist cameras. Add `--emg --display decoder` to expose the waveforms
+and decoded hand as clickable tabs in the lower dock.
+
+The `arat_default` workspace uses JoyLo's viewport-only Kit layout: Stage,
+Layer, Property, Render Settings, and the other editor panels are hidden. It
+also uses JoyLo's 1080-square main render, 256-square auxiliary renders,
+left/right dock ratios of 0.25/0.20, with the two wrist views evenly split.
+Viewport
+textures retain those fixed square resolutions, matching JoyLo rather than
+adopting the docked panels' aspect ratios. Rectangular panels therefore show
+black letterboxing around the square views. When `--emg` is active and its
+display is enabled, Content and Console are restored so `OYMotion EMG` and
+`EMG2Pose Hand` can share that lower tab stack.
 
 To inspect a saved task layout without starting HTS, loading a robot, or
 initializing a BehaviorTask, use the camera-only viewer:
@@ -153,10 +333,10 @@ python dex_teleop/scripts/launch_og.py \
   --view-only
 ```
 
-Because view-only mode intentionally omits the robot, it shows the movable
-overview in the center with the left- and right-shoulder cameras docked beside
-it. Use right-click drag to look around, `W`/`S` to move forward/back,
-`A`/`D` to move left/right, and `T`/`G` to move up/down in the center view.
+Because view-only mode intentionally omits the robot, its right-lower viewport
+is empty. The fixed chest view remains in the center with the left- and
+right-shoulder cameras docked beside it. Press `B` to toggle the center
+viewport between chest and overview.
 
 Run every activity in a subscale in the same process, using a fixed number of
 simulation steps per item:

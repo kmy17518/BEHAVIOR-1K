@@ -2,8 +2,8 @@
 """Render the ARAT task overview PNGs from the left-shoulder camera.
 
 Run this script in ``behavior_dex`` with ``OMNIGIBSON_HEADLESS=1``. Each
-output is a horizontal concatenation of 640 x 480 RGB frames in the declared
-task order.
+output is a horizontal concatenation of left-shoulder RGB frames in the
+declared task order.
 """
 
 from __future__ import annotations
@@ -37,12 +37,9 @@ for source_root in (
     sys.path.insert(0, str(source_root))
 
 from dex_teleop.arat import AratTaskCatalog  # noqa: E402
+from dex_teleop.arat.reset_poses import DEFAULT_RESET_POSE, add_reset_pose_argument, reset_joint_positions  # noqa: E402
 from dex_teleop.arat.scene import validate_runtime_assets  # noqa: E402
 from dex_teleop.omnigibson.launcher import (  # noqa: E402
-    CAMERA_IMAGE_HEIGHT,
-    CAMERA_IMAGE_WIDTH,
-    RESET_JOINT_POSITIONS,
-    _external_camera_configs,
     _hide_skybox_from_camera,
     _reset_arat_box,
     _show_robot_end_effectors,
@@ -97,24 +94,26 @@ def _parser() -> argparse.ArgumentParser:
         default=30,
         help="Render frames before capture so RTX materials and lighting converge",
     )
+    add_reset_pose_argument(parser)
     return parser
 
 
-def _left_camera_config() -> dict:
-    camera = _external_camera_configs(include_wrist=False)[0]
-    if camera["name"] != LEFT_CAMERA_NAME:
-        raise AssertionError(f"Expected {LEFT_CAMERA_NAME}, got {camera['name']}")
+def _left_camera_config(config: dict) -> dict:
+    try:
+        camera = next(
+            camera for camera in config["env"]["external_sensors"] if camera["name"] == LEFT_CAMERA_NAME
+        )
+    except StopIteration as error:
+        raise ValueError(f"Camera rig does not define {LEFT_CAMERA_NAME}") from error
     camera["modalities"] = ["rgb"]
-    camera["sensor_kwargs"]["image_height"] = CAMERA_IMAGE_HEIGHT
-    camera["sensor_kwargs"]["image_width"] = CAMERA_IMAGE_WIDTH
     return camera
 
 
-def _rgb_to_image(rgb) -> Image.Image:
+def _rgb_to_image(rgb, *, width: int, height: int) -> Image.Image:
     if hasattr(rgb, "detach"):
         rgb = rgb.detach().cpu().numpy()
     rgb = np.asarray(rgb)
-    if rgb.ndim != 3 or rgb.shape[:2] != (CAMERA_IMAGE_HEIGHT, CAMERA_IMAGE_WIDTH):
+    if rgb.ndim != 3 or rgb.shape[:2] != (height, width):
         raise ValueError(f"Unexpected left-camera RGB shape: {rgb.shape}")
     if rgb.shape[2] == 4:
         rgb = rgb[:, :, :3]
@@ -125,15 +124,22 @@ def _rgb_to_image(rgb) -> Image.Image:
     return Image.fromarray(np.clip(rgb, 0, 255).astype(np.uint8), mode="RGB")
 
 
-def render_task(task, settle_steps: int, render_frames: int) -> Image.Image:
+def render_task(
+    task,
+    settle_steps: int,
+    render_frames: int,
+    *,
+    reset_pose: str = DEFAULT_RESET_POSE,
+) -> Image.Image:
     import omnigibson as og
     import torch as th
 
     if og.sim is not None and og.sim.scenes:
         og.clear()
 
-    config = build_environment_config(task)
-    config["env"]["external_sensors"] = [_left_camera_config()]
+    config = build_environment_config(task, reset_pose=reset_pose)
+    camera_config = _left_camera_config(config)
+    config["env"]["external_sensors"] = [camera_config]
     env = og.Environment(configs=config)
     try:
         env.reset()
@@ -141,13 +147,13 @@ def render_task(task, settle_steps: int, render_frames: int) -> Image.Image:
         _reset_arat_box(env)
         _hide_skybox_from_camera()
         robot = env.robots[0]
-        robot.set_joint_positions(th.tensor(RESET_JOINT_POSITIONS, dtype=th.float32))
+        reset_positions = th.tensor(reset_joint_positions(reset_pose), dtype=th.float32)
+        robot.set_joint_positions(reset_positions)
         robot.keep_still()
         _show_robot_end_effectors(robot)
         # Match launch_og.py's disengaged loop before taking a still. Advancing
         # physics is important here: render-only frames do not synchronize an
         # articulated box pose through PhysX / Fabric after _reset_arat_box().
-        reset_positions = th.tensor(RESET_JOINT_POSITIONS, dtype=th.float32)
         for _ in range(settle_steps):
             robot.set_joint_positions(reset_positions)
             robot.keep_still()
@@ -155,15 +161,24 @@ def render_task(task, settle_steps: int, render_frames: int) -> Image.Image:
         for _ in range(render_frames):
             og.sim.render()
         observations, _ = env.external_sensors[LEFT_CAMERA_NAME].get_obs()
-        return _rgb_to_image(observations["rgb"])
+        return _rgb_to_image(
+            observations["rgb"],
+            width=camera_config["sensor_kwargs"]["image_width"],
+            height=camera_config["sensor_kwargs"]["image_height"],
+        )
     finally:
         og.clear()
 
 
 def concatenate_frames(frames: list[Image.Image]) -> Image.Image:
-    output = Image.new("RGB", (CAMERA_IMAGE_WIDTH * len(frames), CAMERA_IMAGE_HEIGHT))
+    if not frames:
+        raise ValueError("At least one frame is required")
+    width, height = frames[0].size
+    if any(frame.size != (width, height) for frame in frames):
+        raise ValueError("All camera frames in an output group must share a resolution")
+    output = Image.new("RGB", (width * len(frames), height))
     for index, frame in enumerate(frames):
-        output.paste(frame, (index * CAMERA_IMAGE_WIDTH, 0))
+        output.paste(frame, (index * width, 0))
     return output
 
 
@@ -192,7 +207,14 @@ def main() -> None:
             frames = []
             for index, activity in enumerate(activities, start=1):
                 print(f"ARAT_IMAGE_RENDERING group={group} panel={index}/{len(activities)} task={activity}", flush=True)
-                frames.append(render_task(catalog.tasks[activity], args.settle_steps, args.render_frames))
+                frames.append(
+                    render_task(
+                        catalog.tasks[activity],
+                        args.settle_steps,
+                        args.render_frames,
+                        reset_pose=args.reset_pose,
+                    )
+                )
             output_path = args.output_dir / f"{group}.png"
             temporary_path = output_path.with_name(f".{output_path.name}.tmp.png")
             concatenate_frames(frames).save(temporary_path)
