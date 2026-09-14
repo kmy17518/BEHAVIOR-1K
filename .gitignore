@@ -9,3 +9,5 @@ outputs/
 
 __pycache__/
 .codex
+
+OmniGibson/omnigibson/experiments/

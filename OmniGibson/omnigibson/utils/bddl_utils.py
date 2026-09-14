@@ -200,6 +200,7 @@ PREDICATE_TO_STATE = {
     bddl_predicates.Draped: object_states.Draped,
     bddl_predicates.PoseReached: object_states.PoseReached,
     bddl_predicates.PoseSettled: object_states.PoseSettled,
+    bddl_predicates.LayoutReached: object_states.LayoutReached,
     bddl_predicates.Grasped: object_states.Grasped,
 }
 

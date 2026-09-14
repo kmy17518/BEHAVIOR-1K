@@ -10,7 +10,7 @@ from omnigibson.utils.ui_utils import create_module_logger
 log = create_module_logger(module_name=__name__)
 
 
-_VALID_POS_AXES = (None, "z", "xy")
+_VALID_POS_AXES = (None, "z", "xy", "depth")
 _VALID_ORI_AXES = (None, "yaw")
 
 
@@ -21,6 +21,29 @@ def _as_tensor(value):
     if isinstance(value, th.Tensor):
         return value.detach().to(dtype=th.float32)
     return th.tensor(value, dtype=th.float32)
+
+
+def quat_angle(q1, q2):
+    """Angular distance (radians, in [0, pi]) between two unit quaternions ``q1`` and ``q2`` (xyzw)."""
+    dot = th.abs(th.sum(q1 * q2))
+    dot = th.clamp(dot, -1.0, 1.0)
+    return (2.0 * th.acos(dot)).item()
+
+
+def quat_angle_with_equivalences(current_quat, goal_quat, equivalences=None):
+    """Orientation error (radians) between ``current_quat`` and ``goal_quat`` after snapping the measured
+    orientation to the closest visually-equivalent orientation.
+
+    ``equivalences`` is a list of unit quaternions ``e`` (xyzw) expressed in the *object frame* such that the
+    object looks identical under ``q_current * e`` (right multiplication: a symmetry of the object itself). The
+    identity is always included. Returns the minimum angular distance over all equivalents.
+    """
+    best = quat_angle(current_quat, goal_quat)
+    if equivalences is None:
+        return best
+    for eq in equivalences:
+        best = min(best, quat_angle(T.quat_multiply(current_quat, eq), goal_quat))
+    return best
 
 
 class PoseReached(AbsoluteObjectState, BooleanStateMixin):
@@ -42,9 +65,16 @@ class PoseReached(AbsoluteObjectState, BooleanStateMixin):
             * ``None`` (default) -- compare full 3D position.
             * ``"z"``           -- compare only the z component.
             * ``"xy"``          -- compare only the (x, y) components.
+            * ``"depth"``       -- compare only the depth along the comparison frame's optical axis. Requires a
+              non-world ``frame`` (normally a camera sensor: ``"<robot_name>::<sensor_key>"``). Cameras follow the
+              USD convention (optical axis = -Z of the sensor frame), so depth is ``-z`` of the position expressed
+              in that frame; the error is ``|depth_current - depth_goal|``.
         ori_axes: which orientation axes to compare. One of:
             * ``None`` (default) -- compare full quaternion (angular distance).
             * ``"yaw"``          -- compare only the yaw (z-axis Euler) component.
+        orientation_equivalences: optional list of unit quaternions (xyzw), expressed in the object frame, under
+            which the object is visually identical (``q_current * e``). The measured orientation is snapped to the
+            closest equivalent before the orientation error is computed. Empty / None means exact.
         link: name of a sensor or link on ``self.obj`` whose world pose to use as the current pose.
             ``None`` (default) means use ``self.obj.get_position_orientation()`` (root pose).
         frame: reference frame in which ``goal_pos`` / ``goal_ori`` are expressed and in which the
@@ -80,6 +110,7 @@ class PoseReached(AbsoluteObjectState, BooleanStateMixin):
         self._frame = "world"
         self._pos_tolerance = None
         self._ori_tolerance = None
+        self._orientation_equivalences = None
 
         # Init parameters (read-only, consumed by external loaders)
         self._init_pos = None
@@ -104,19 +135,61 @@ class PoseReached(AbsoluteObjectState, BooleanStateMixin):
         frame="world",
         pos_tolerance=None,
         ori_tolerance=None,
+        orientation_equivalences=None,
     ):
         """Populate the goal parameters used by ``get_value`` / ``get_error``."""
         assert pos_axes in _VALID_POS_AXES, f"pos_axes must be one of {_VALID_POS_AXES}, got {pos_axes!r}"
         assert ori_axes in _VALID_ORI_AXES, f"ori_axes must be one of {_VALID_ORI_AXES}, got {ori_axes!r}"
+        frame = frame if frame is not None else "world"
+        if pos_axes == "depth" and frame == "world":
+            raise ValueError("PoseReached: pos_axes='depth' requires a non-world (camera) frame")
 
         self._goal_pos = _as_tensor(goal_pos)
         self._goal_ori = _as_tensor(goal_ori)
+        if self._goal_ori is not None:
+            self._goal_ori = self._goal_ori / th.norm(self._goal_ori)
         self._pos_axes = pos_axes
         self._ori_axes = ori_axes
         self._link = link
-        self._frame = frame if frame is not None else "world"
+        self._frame = frame
         self._pos_tolerance = float(pos_tolerance) if pos_tolerance is not None else None
         self._ori_tolerance = float(ori_tolerance) if ori_tolerance is not None else None
+        if orientation_equivalences:
+            eqs = [_as_tensor(eq) for eq in orientation_equivalences]
+            for eq in eqs:
+                assert eq.shape == (4,), f"orientation_equivalences entries must be xyzw quaternions, got {eq}"
+            self._orientation_equivalences = [eq / th.norm(eq) for eq in eqs]
+        else:
+            self._orientation_equivalences = None
+        # A new goal invalidates any value cached earlier in this simulator step.
+        self.clear_cache()
+
+    def clear_goal(self):
+        """Remove any configured goal (``get_value`` returns False afterwards)."""
+        self.set_goal()
+
+    @property
+    def has_goal(self):
+        return self._goal_pos is not None or self._goal_ori is not None
+
+    @property
+    def position_metric(self):
+        """Label of the position component being compared: ``"full"``, ``"z"``, ``"xy"``, ``"depth"``, or
+        ``None`` when the position is not part of the goal."""
+        if self._goal_pos is None:
+            return None
+        return "full" if self._pos_axes is None else self._pos_axes
+
+    @property
+    def orientation_metric(self):
+        """Label of the orientation component being compared: ``"full"``, ``"yaw"``, or ``None``."""
+        if self._goal_ori is None:
+            return None
+        return "full" if self._ori_axes is None else self._ori_axes
+
+    @property
+    def orientation_equivalences(self):
+        return self._orientation_equivalences
 
     def set_init(self, init_pos=None, init_ori=None, init_joint_config=None):
         """Populate the read-only init parameters. External loaders read these when placing
@@ -176,20 +249,24 @@ class PoseReached(AbsoluteObjectState, BooleanStateMixin):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _lookup_link_pose(obj, name):
+    def _lookup_link_pose(obj, name, use_render_transform=False):
         """Look up world pose of a sensor or link by name on ``obj``.
 
         Returns ``(pos, quat)`` torch tensors, or ``(None, None)`` if not found.
-        Cameras prefer ``camera_parameters["cameraViewTransform"]`` when populated
-        (mirrors the convention used by the iSpatialGym eval/sampling pipeline).
+
+        Sensors are evaluated from the sensor prim's world pose, which is synchronized with the physics state
+        (the render-side ``camera_parameters["cameraViewTransform"]`` lags the physics state by a render pass and
+        is only used when ``use_render_transform`` is True; both describe the same USD camera frame with the optical
+        axis along -Z).
         """
         sensors = getattr(obj, "sensors", None)
         if sensors and name in sensors:
             camera = sensors[name]
-            direct_cam_pose = camera.camera_parameters.get("cameraViewTransform")
-            if direct_cam_pose is not None and not np.allclose(direct_cam_pose, np.zeros(16)):
-                cam_mat = np.linalg.inv(np.reshape(direct_cam_pose, [4, 4]).T)
-                return T.mat2pose(th.tensor(cam_mat, dtype=th.float32))
+            if use_render_transform:
+                direct_cam_pose = camera.camera_parameters.get("cameraViewTransform")
+                if direct_cam_pose is not None and not np.allclose(direct_cam_pose, np.zeros(16)):
+                    cam_mat = np.linalg.inv(np.reshape(direct_cam_pose, [4, 4]).T)
+                    return T.mat2pose(th.tensor(cam_mat, dtype=th.float32))
             return camera.get_position_orientation()
         links = getattr(obj, "links", None)
         if links and name in links:
@@ -205,9 +282,7 @@ class PoseReached(AbsoluteObjectState, BooleanStateMixin):
             return self.obj.get_position_orientation()
         pos, quat = self._lookup_link_pose(self.obj, self._link)
         if pos is None:
-            raise ValueError(
-                f"PoseReached: link '{self._link}' not found on {self.obj.name}"
-            )
+            raise ValueError(f"PoseReached: link '{self._link}' not found on {self.obj.name}")
         return pos, quat
 
     def _resolve_frame_pose(self):
@@ -230,9 +305,7 @@ class PoseReached(AbsoluteObjectState, BooleanStateMixin):
 
         other = self.obj.scene.object_registry("name", obj_name)
         if other is None:
-            raise ValueError(
-                f"PoseReached: frame '{self._frame}' references unknown object '{obj_name}'"
-            )
+            raise ValueError(f"PoseReached: frame '{self._frame}' references unknown object '{obj_name}'")
 
         if link_name is None:
             return other.get_position_orientation()
@@ -256,6 +329,11 @@ class PoseReached(AbsoluteObjectState, BooleanStateMixin):
     # Error computation
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def depth_of(pos_in_frame):
+        """Depth of a point expressed in a (USD-convention) camera frame: distance along the optical axis (-Z)."""
+        return -pos_in_frame[2].item()
+
     def _pos_error(self, current_pos):
         """Scalar position error (meters) in the configured axes."""
         if self._goal_pos is None:
@@ -263,26 +341,31 @@ class PoseReached(AbsoluteObjectState, BooleanStateMixin):
         delta = current_pos - self._goal_pos
         if self._pos_axes is None:
             return th.norm(delta).item()
-        if self._pos_axes == "z":
+        if self._pos_axes in ("z", "depth"):
+            # depth = -z in the camera frame, so |d_depth| == |d_z|
             return abs(delta[2].item())
         if self._pos_axes == "xy":
             return th.norm(delta[:2]).item()
         raise ValueError(f"Unsupported pos_axes={self._pos_axes!r}")
 
     def _ori_error(self, current_quat):
-        """Scalar orientation error (radians) in the configured axes."""
+        """Scalar orientation error (radians) in the configured axes (after equivalence snapping)."""
         if self._goal_ori is None:
             return None
         if self._ori_axes is None:
-            # Full quaternion angular distance.
-            dot = th.abs(th.sum(current_quat * self._goal_ori))
-            dot = th.clamp(dot, -1.0, 1.0)
-            return (2.0 * th.acos(dot)).item()
+            # Full quaternion angular distance, snapped to the closest visually-equivalent orientation.
+            return quat_angle_with_equivalences(current_quat, self._goal_ori, self._orientation_equivalences)
         if self._ori_axes == "yaw":
-            current_yaw = T.quat2euler(current_quat)[2].item()
             goal_yaw = T.quat2euler(self._goal_ori)[2].item()
-            diff = (current_yaw - goal_yaw + math.pi) % (2.0 * math.pi) - math.pi
-            return abs(diff)
+            candidates = [current_quat]
+            if self._orientation_equivalences:
+                candidates += [T.quat_multiply(current_quat, eq) for eq in self._orientation_equivalences]
+            best = None
+            for cand in candidates:
+                current_yaw = T.quat2euler(cand)[2].item()
+                diff = abs((current_yaw - goal_yaw + math.pi) % (2.0 * math.pi) - math.pi)
+                best = diff if best is None else min(best, diff)
+            return best
         raise ValueError(f"Unsupported ori_axes={self._ori_axes!r}")
 
     def get_error(self):
@@ -298,6 +381,38 @@ class PoseReached(AbsoluteObjectState, BooleanStateMixin):
         current_pos, current_quat = self._pose_in_frame(current_pos, current_quat)
         return self._pos_error(current_pos), self._ori_error(current_quat)
 
+    def get_error_report(self):
+        """Structured error read-out for logging.
+
+        Returns:
+            dict with keys ``position_error`` (m or None), ``orientation_error`` (rad or None),
+            ``position_metric``, ``orientation_metric``, ``within_tolerance`` (bool), and, for the depth metric,
+            ``depth`` / ``goal_depth`` (m). ``None`` when no goal is configured.
+        """
+        if not self.has_goal:
+            return None
+        current_pos, current_quat = self._get_current_pose()
+        current_pos, current_quat = self._pose_in_frame(current_pos, current_quat)
+        pos_error, ori_error = self._pos_error(current_pos), self._ori_error(current_quat)
+        report = {
+            "position_error": pos_error,
+            "orientation_error": ori_error,
+            "position_metric": self.position_metric,
+            "orientation_metric": self.orientation_metric,
+            "within_tolerance": self._within_tolerance(pos_error, ori_error),
+        }
+        if self._pos_axes == "depth":
+            report["depth"] = self.depth_of(current_pos)
+            report["goal_depth"] = self.depth_of(self._goal_pos)
+        return report
+
+    def _within_tolerance(self, pos_error, ori_error):
+        if pos_error is not None and self._pos_tolerance is not None and pos_error > self._pos_tolerance:
+            return False
+        if ori_error is not None and self._ori_tolerance is not None and ori_error > self._ori_tolerance:
+            return False
+        return True
+
     # ------------------------------------------------------------------
     # State API
     # ------------------------------------------------------------------
@@ -308,12 +423,7 @@ class PoseReached(AbsoluteObjectState, BooleanStateMixin):
             return False
 
         pos_error, ori_error = self.get_error()
-
-        if pos_error is not None and self._pos_tolerance is not None and pos_error > self._pos_tolerance:
-            return False
-        if ori_error is not None and self._ori_tolerance is not None and ori_error > self._ori_tolerance:
-            return False
-        return True
+        return self._within_tolerance(pos_error, ori_error)
 
     def _set_value(self, new_value, **kwargs):
         log.warning(

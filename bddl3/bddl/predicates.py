@@ -178,6 +178,21 @@ class PoseSettled(UnaryPredicate):
     pass
 
 
+class LayoutReached(UnaryPredicate):
+    """True when the *internal / relative* configuration of a multi-part entity matches a goal
+    configured by an external loader (iSpatialGym ``ispatialgym`` domain).
+
+    * For an articulated object the parts are its links and the configuration is parametrized by
+      its joint positions (one target + tolerance per non-fixed joint).
+    * For a declared group the parts are the member objects and the configuration is the set of
+      pairwise relative poses stored as ``layout_relations`` in the TRO.
+
+    See ``omnigibson.object_states.layout_reached.LayoutReached`` (articulated objects) and
+    ``ispatialgym.eval.group_entity`` (groups).
+    """
+    pass
+
+
 # ---------------------------------------------------------------------------
 # Binary predicates
 # ---------------------------------------------------------------------------
@@ -261,6 +276,7 @@ TOKEN_TO_PREDICATE = {
     "broken": Broken,
     "pose_reached": PoseReached,
     "pose_settled": PoseSettled,
+    "layout_reached": LayoutReached,
     # Binary
     "saturated": Saturated,
     "covered": Covered,
