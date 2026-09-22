@@ -195,15 +195,38 @@ python dex_teleop/scripts/launch_hand_bench.py \
   --recording-path dex_teleop/outputs/recordings/session_01.hdf5
 ```
 
-`--emg` needs the Synchroni SDK in the same environment: `pip install -e
-/path/to/synchroni-sensor-sdk` (or pass `--emg-sdk-path`). `--emg-adapter` is
-the BlueZ adapter that owns the band (`bluetoothctl list`; `hci0` is not
-guaranteed). With one `OY*`/`gForce*` band in range `--emg-device` can be
-omitted. The Bluetooth connection is made before Isaac Sim starts, the
-waveform monitor is docked right of the main view (`--no-emg-display` to skip
-it), and `--display decoder` adds the VEMG2Pose hand from the `emg2pose`
-checkout beside this repository. Firmware filters default to HPF on, LPF on,
-60 Hz notch (`--no-emg-hpf`, `--no-emg-lpf`, `--emg-notch 50|both|off`).
+### Synchroni SDK (required for `--emg`)
+
+The OYMotion band is driven by the OYMotion Synchroni Python SDK, which
+`setup.sh` does not install. Use our fork (branch `my`; it adds the
+`SYNCHRONI_BLE_ADAPTER` adapter selection and connection-recovery fixes the
+sidecar relies on) and install it without its dependency pins so `bleak` stays
+at the 3.x version the sidecar was validated with:
+
+```bash
+git clone --branch my https://github.com/13RENDA/synchroni-sensor-sdk.git ../synchroni-sensor-sdk
+pip install -e ../synchroni-sensor-sdk --no-deps
+pip install "bleak>=3.0.2" "flatbuffers>=25.0.0"
+
+# Pre-check without the bench: band on, adapter from `bluetoothctl list`
+SYNCHRONI_BLE_ADAPTER=hci1 python -c "from sensor import SensorController; \
+  print([(d.Name, d.Address) for d in SensorController().scan(5000)])"
+#   e.g. [('OYWW1000', 'D8:71:4D:8D:99:92')]; [] means the band is off or out of range
+```
+
+(`--emg-sdk-path ../synchroni-sensor-sdk` is the alternative to `pip install -e`.)
+
+How the band is found: `--emg` starts a sidecar Python process in the same
+environment; it runs a BLE scan for `--emg-scan-ms` (5 s) on `--emg-adapter`,
+then selects **exactly one** device: the one whose address equals, or whose
+name contains, `--emg-device`, or, when the flag is omitted, the single device
+whose name starts with `OY`, `Sync`, or `gForce`. Zero or several matches abort
+before Isaac Sim starts. It then connects, disables the IMU stream, applies and
+verifies the firmware filters, and streams EMG into the recording. Firmware
+filters default to HPF on, LPF on, 60 Hz notch (`--no-emg-hpf`,
+`--no-emg-lpf`, `--emg-notch 50|both|off`). The waveform monitor is docked
+right of the main view (`--no-emg-display` to skip it), and `--display decoder`
+adds the VEMG2Pose hand from the `emg2pose` checkout beside this repository.
 
 While recording, `R` ends the episode and starts a new one with an open hand
 (`demo_0`, `demo_1`, ...); paused or stale steps are not recorded. Ctrl+C
@@ -248,6 +271,9 @@ pytest -q dex_teleop/tests
 - `Expected exactly one EMG device matching ..., found 0`: the band is off,
   out of range, or connected to another host; the scan runs before Isaac Sim
   starts, so nothing else was touched.
+- `Synchroni SDK is unavailable in this Python environment`: install the SDK
+  as in step 7 (or pass `--emg-sdk-path`); the sidecar imports it from the
+  same conda environment as the bench.
 
 ## More
 
