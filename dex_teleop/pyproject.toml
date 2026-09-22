@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "dex-teleop"
 version = "0.1.0"
-description = "Landmark-based dexterous hand teleoperation for BEHAVIOR-1K"
+description = "Multi-source dexterous hand teleoperation for BEHAVIOR-1K"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -19,14 +19,18 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest"]
+dexpilot = ["dex-retargeting==0.4.6"]
 
 [project.scripts]
+dex-teleop-manus-diagnostics = "dex_teleop.tracking.manus_diagnostics:main"
+dex-teleop-calibrate-vive = "dex_teleop.tracking.vive_calibration:main"
 dex-teleop-og = "dex_teleop.omnigibson.launcher:main"
 dex-teleop-replay = "dex_teleop.omnigibson.replay:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
 include-package-data = true
+license-files = ["THIRD_PARTY_NOTICES.md"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -34,6 +38,9 @@ where = ["src"]
 [tool.setuptools.package-data]
 dex_teleop = [
   "arat/*.yaml",
+  "arat/eval/*.yaml",
+  "native/manus_bridge/*.cpp",
+  "native/manus_bridge/*.sh",
   "retargeting/configs/*.yaml",
   "retargeting/urdf/**/*.urdf",
 ]

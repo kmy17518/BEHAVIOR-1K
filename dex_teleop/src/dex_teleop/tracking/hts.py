@@ -10,14 +10,22 @@ import logging
 import socket
 import threading
 import time
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from typing import Iterable
 
 import numpy as np
 
 from dex_teleop.tracking.base import HandTrackingSource, SourceUnavailableError
-from dex_teleop.types import HandFrame, Handedness, MEDIAPIPE_JOINT_NAMES
+from dex_teleop.tracking.multimodal import HandTrackingSampleBatch
+from dex_teleop.types import (
+    HandArticulationSample,
+    HandFrame,
+    Handedness,
+    MEDIAPIPE_JOINT_NAMES,
+    OPENXR_ANATOMICAL_WRIST_FRAME,
+    WristPoseSample,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -25,9 +33,22 @@ LOGGER = logging.getLogger(__name__)
 class HTSProtocolError(ValueError):
     """Raised when HTS hand data does not satisfy the expected wire contract."""
 
+
+class HTSBufferOverflowError(RuntimeError):
+    """Raised instead of silently dropping an unread native-rate HTS sample."""
+
+
 # Unity LH (x right, y up, z forward) -> RH (x forward, y left, z up).
 _UNITY_TO_RH = np.array(
     [[0.0, 0.0, 1.0], [-1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+    dtype=np.float64,
+)
+
+# Legacy HTS output uses x-forward, y-left, z-up.  Rich multimodal values use
+# the OpenXR anatomical wrist basis: x-right, y-up, z-back.  The legacy
+# ``HandFrame`` below deliberately remains in its historical basis.
+_D_TO_OPENXR = np.array(
+    [[0.0, -1.0, 0.0], [0.0, 0.0, 1.0], [-1.0, 0.0, 0.0]],
     dtype=np.float64,
 )
 
@@ -180,17 +201,115 @@ def _parse_line(line: str) -> _HTSRecord | None:
 
 @dataclass
 class _ClockAlignment:
-    """Map one HTS monotonic clock onto the desktop monotonic clock."""
+    """Robustly map the HTS monotonic clock onto desktop monotonic time.
+
+    Receipt time is capture time plus non-negative transport/scheduling delay.
+    A bounded rolling affine fit tracks headset-clock drift, while a low
+    intercept quantile rejects positive arrival jitter and occasional stalls.
+    """
 
     source_origin_ns: int | None = None
-    desktop_origin: float | None = None
+    desktop_offset: float | None = None
+    rate: float = 1.0
+    maximum_drift_ppm: float = 5_000.0
+    maximum_offset_step_seconds: float = 0.001
+    rate_smoothing: float = 0.2
+    refit_interval: int = 8
+    observation_count: int = 0
+    last_source_timestamp_ns: int | None = None
+    last_desktop_timestamp: float | None = None
+    observations: deque[tuple[float, float]] = field(
+        default_factory=lambda: deque(maxlen=512)
+    )
+
+    def _refit(self) -> None:
+        if len(self.observations) < 8:
+            return
+        values = np.asarray(self.observations, dtype=np.float64)
+        source_seconds = values[:, 0]
+        receipts = values[:, 1]
+        if source_seconds[-1] - source_seconds[0] < 0.5:
+            return
+
+        centered_source = source_seconds - np.mean(source_seconds)
+        centered_receipts = receipts - np.mean(receipts)
+        denominator = float(np.dot(centered_source, centered_source))
+        if denominator <= np.finfo(np.float64).eps:
+            return
+        rate = float(np.dot(centered_source, centered_receipts) / denominator)
+
+        # Remove large scheduling/network stalls, then fit again. Ordinary
+        # jitter remains zero-slope noise and does not bias the clock rate.
+        intercepts = receipts - rate * source_seconds
+        residuals = intercepts - np.median(intercepts)
+        mad = float(np.median(np.abs(residuals)))
+        if mad > np.finfo(np.float64).eps:
+            keep = np.abs(residuals) <= 4.0 * 1.4826 * mad
+            if np.count_nonzero(keep) >= 8:
+                kept_source = source_seconds[keep]
+                kept_receipts = receipts[keep]
+                centered_source = kept_source - np.mean(kept_source)
+                centered_receipts = kept_receipts - np.mean(kept_receipts)
+                denominator = float(np.dot(centered_source, centered_source))
+                if denominator > np.finfo(np.float64).eps:
+                    rate = float(
+                        np.dot(centered_source, centered_receipts) / denominator
+                    )
+                    source_seconds = kept_source
+                    receipts = kept_receipts
+
+        drift_bound = self.maximum_drift_ppm * 1e-6
+        target_rate = float(np.clip(rate, 1.0 - drift_bound, 1.0 + drift_bound))
+        self.rate += self.rate_smoothing * (target_rate - self.rate)
+        # The lower envelope estimates the fixed clock offset plus the smallest
+        # observed network delay without chasing a single extreme observation.
+        target_offset = float(
+            np.quantile(receipts - self.rate * source_seconds, 0.05)
+        )
+        assert self.desktop_offset is not None
+        offset_step = float(
+            np.clip(
+                target_offset - self.desktop_offset,
+                -self.maximum_offset_step_seconds,
+                self.maximum_offset_step_seconds,
+            )
+        )
+        self.desktop_offset += offset_step
 
     def to_desktop(self, source_timestamp_ns: int, receipt_timestamp: float) -> float:
+        if (
+            self.last_source_timestamp_ns is not None
+            and source_timestamp_ns <= self.last_source_timestamp_ns
+        ):
+            raise HTSProtocolError(
+                "HTS source clock must be strictly increasing within a hand stream"
+            )
         if self.source_origin_ns is None:
             self.source_origin_ns = source_timestamp_ns
-            self.desktop_origin = receipt_timestamp
-        assert self.desktop_origin is not None
-        return self.desktop_origin + (source_timestamp_ns - self.source_origin_ns) / 1e9
+            self.desktop_offset = receipt_timestamp
+        assert self.desktop_offset is not None
+        source_seconds = (source_timestamp_ns - self.source_origin_ns) / 1e9
+        self.observations.append((source_seconds, receipt_timestamp))
+        self.observation_count += 1
+        if self.observation_count % self.refit_interval == 0:
+            self._refit()
+        # A capture estimate may equal but must never exceed when it arrived.
+        mapped = min(
+            self.desktop_offset + self.rate * source_seconds,
+            receipt_timestamp,
+        )
+        if self.last_desktop_timestamp is not None:
+            lower_bound = float(np.nextafter(self.last_desktop_timestamp, np.inf))
+            if mapped < lower_bound:
+                if lower_bound > receipt_timestamp:
+                    raise HTSProtocolError(
+                        "HTS receipt timestamps leave no room for a strictly "
+                        "increasing clock-alignment estimate"
+                    )
+                mapped = lower_bound
+        self.last_source_timestamp_ns = source_timestamp_ns
+        self.last_desktop_timestamp = mapped
+        return mapped
 
 
 @dataclass(frozen=True)
@@ -233,7 +352,14 @@ _PairingKey = tuple[str, int | None, int | None]
 class _HandState:
     pending: dict[_PairingKey, _PendingHandFrame] = field(default_factory=dict)
     latest: HandFrame | None = None
+    latest_articulation: HandArticulationSample | None = None
+    latest_wrist: WristPoseSample | None = None
     diagnostic_history: OrderedDict[float, HTSFrameDiagnostics] = field(default_factory=OrderedDict)
+    unread_samples: deque[tuple[HandArticulationSample, WristPoseSample]] = field(
+        default_factory=deque
+    )
+    maximum_buffered_samples: int = 256
+    lossless_buffering: bool = False
     last_source_timestamp_ns: int | None = None
     clock_alignment: _ClockAlignment = field(default_factory=_ClockAlignment)
 
@@ -333,12 +459,53 @@ class _HandState:
                 pending.source_timestamp_ns,
                 pending.receipt_timestamp,
             )
+        if self.latest is not None and timestamp <= self.latest.timestamp:
+            # An affine refit may move the estimated offset backwards.  Keep
+            # each hand stream strictly ordered while retaining the invariant
+            # that capture cannot occur after receipt.
+            timestamp = float(np.nextafter(self.latest.timestamp, np.inf))
+            if timestamp > pending.receipt_timestamp:
+                raise HTSProtocolError(
+                    "HTS receipt timestamps leave no room for a strictly "
+                    "increasing capture-time estimate"
+                )
 
+        landmarks_openxr = (_D_TO_OPENXR @ pending.landmarks_local.T).T
+        local_joints = dict(
+            zip(MEDIAPIPE_JOINT_NAMES, landmarks_openxr, strict=True)
+        )
+        articulation = HandArticulationSample(
+            timestamp=timestamp,
+            receipt_timestamp=pending.landmarks_receipt_timestamp,
+            source_timestamp_ns=pending.source_timestamp_ns,
+            source_frame_id=pending.source_frame_id,
+            handedness=handedness,
+            joint_positions=local_joints,
+            source="hts",
+            schema="mediapipe21",
+            coordinate_frame=OPENXR_ANATOMICAL_WRIST_FRAME,
+        )
+        wrist_openxr_quaternion = _matrix_to_quaternion(
+            _quaternion_to_matrix(pending.wrist_quaternion_xyzw)
+            @ _D_TO_OPENXR.T
+        )
+        wrist = WristPoseSample(
+            timestamp=timestamp,
+            receipt_timestamp=pending.wrist_receipt_timestamp,
+            source_timestamp_ns=pending.source_timestamp_ns,
+            source_frame_id=pending.source_frame_id,
+            handedness=handedness,
+            position=pending.wrist_position,
+            quaternion_xyzw=wrist_openxr_quaternion,
+            source="hts",
+            reference_frame="tracking",
+            anatomical_frame=OPENXR_ANATOMICAL_WRIST_FRAME,
+        )
         landmarks_world = (
             _rotate(pending.landmarks_local, pending.wrist_quaternion_xyzw) + pending.wrist_position
         )
         joints = dict(zip(MEDIAPIPE_JOINT_NAMES, landmarks_world, strict=True))
-        self.latest = HandFrame(
+        frame = HandFrame(
             timestamp=timestamp,
             receipt_timestamp=pending.receipt_timestamp,
             source_timestamp_ns=pending.source_timestamp_ns,
@@ -349,7 +516,7 @@ class _HandState:
             wrist_quaternion_xyzw=pending.wrist_quaternion_xyzw,
             source="hts",
         )
-        self.diagnostic_history[timestamp] = HTSFrameDiagnostics(
+        diagnostics = HTSFrameDiagnostics(
             frame_timestamp=timestamp,
             wrist_receipt_timestamp=pending.wrist_receipt_timestamp,
             landmarks_receipt_timestamp=pending.landmarks_receipt_timestamp,
@@ -359,6 +526,17 @@ class _HandState:
             raw_wrist_quaternion_xyzw=pending.raw_wrist_quaternion_xyzw.copy(),
             raw_landmarks_unity=pending.raw_landmarks_unity.copy(),
         )
+        if self.lossless_buffering:
+            if len(self.unread_samples) >= self.maximum_buffered_samples:
+                raise HTSBufferOverflowError(
+                    f"HTS {handedness.value}-hand native sample buffer exceeded "
+                    f"{self.maximum_buffered_samples} unread frames"
+                )
+            self.unread_samples.append((articulation, wrist))
+        self.latest_articulation = articulation
+        self.latest_wrist = wrist
+        self.latest = frame
+        self.diagnostic_history[timestamp] = diagnostics
         while len(self.diagnostic_history) > 512:
             self.diagnostic_history.popitem(last=False)
         if pending.source_timestamp_ns is not None:
@@ -371,6 +549,21 @@ class _HandState:
         if self.latest is not None and self.latest.handedness != handedness:
             raise ValueError(f"HTS state contains {self.latest.handedness.value} data, not {handedness.value}")
         return self.latest
+
+    def articulation(self, handedness: Handedness) -> HandArticulationSample | None:
+        if self.latest_articulation is not None and self.latest_articulation.handedness != handedness:
+            raise ValueError(
+                f"HTS state contains {self.latest_articulation.handedness.value} data, "
+                f"not {handedness.value}"
+            )
+        return self.latest_articulation
+
+    def wrist(self, handedness: Handedness) -> WristPoseSample | None:
+        if self.latest_wrist is not None and self.latest_wrist.handedness != handedness:
+            raise ValueError(
+                f"HTS state contains {self.latest_wrist.handedness.value} data, not {handedness.value}"
+            )
+        return self.latest_wrist
 
     def diagnostics_for_timestamp(self, timestamp: float) -> HTSFrameDiagnostics | None:
         diagnostics = self.diagnostic_history.get(timestamp)
@@ -391,17 +584,28 @@ class _HandState:
 class HTSSource(HandTrackingSource):
     """Quest HTS UDP/TCP listener producing canonical hand frames."""
 
-    def __init__(self, host: str = "0.0.0.0", port: int = 9000, protocol: str = "udp") -> None:
+    def __init__(
+        self,
+        host: str = "0.0.0.0",
+        port: int = 9000,
+        protocol: str = "udp",
+        maximum_buffered_samples: int = 256,
+    ) -> None:
         protocol = protocol.lower()
         if protocol not in {"udp", "tcp"}:
             raise ValueError(f"protocol must be 'udp' or 'tcp', got {protocol!r}")
+        if maximum_buffered_samples <= 0:
+            raise ValueError("maximum_buffered_samples must be positive")
         self.host = host
         self.port = int(port)
         self.protocol = protocol
-        clock_alignment = _ClockAlignment()
         self._states = {
-            Handedness.LEFT: _HandState(clock_alignment=clock_alignment),
-            Handedness.RIGHT: _HandState(clock_alignment=clock_alignment),
+            Handedness.LEFT: _HandState(
+                maximum_buffered_samples=maximum_buffered_samples,
+            ),
+            Handedness.RIGHT: _HandState(
+                maximum_buffered_samples=maximum_buffered_samples,
+            ),
         }
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -424,6 +628,51 @@ class HTSSource(HandTrackingSource):
         self.check_health()
         with self._lock:
             return self._states[Handedness(handedness)].frame(Handedness(handedness))
+
+    def read_articulation(self, handedness: Handedness) -> HandArticulationSample | None:
+        """Return HTS landmarks in their wrist-local MediaPipe-21 representation."""
+
+        self.check_health()
+        handedness = Handedness(handedness)
+        with self._lock:
+            return self._states[handedness].articulation(handedness)
+
+    def read_wrist(self, handedness: Handedness) -> WristPoseSample | None:
+        """Return the wrist component from the same receiver used by :meth:`read`."""
+
+        self.check_health()
+        handedness = Handedness(handedness)
+        with self._lock:
+            return self._states[handedness].wrist(handedness)
+
+    def drain_hand_tracking(self, handedness: Handedness) -> HandTrackingSampleBatch:
+        """Enable lossless buffering and atomically consume paired HTS samples.
+
+        Latest-value clients never activate the bounded queue, preserving the
+        legacy :meth:`read` contract without eventually overflowing.  The
+        first drain returns the current latest pair, if one already exists;
+        subsequent drains return every pair acquired since the prior drain.
+        """
+
+        self.check_health()
+        handedness = Handedness(handedness)
+        with self._lock:
+            state = self._states[handedness]
+            if state.lossless_buffering:
+                samples = tuple(state.unread_samples)
+            else:
+                state.lossless_buffering = True
+                samples = (
+                    ((state.latest_articulation, state.latest_wrist),)
+                    if state.latest_articulation is not None
+                    and state.latest_wrist is not None
+                    else ()
+                )
+            state.unread_samples.clear()
+        return HandTrackingSampleBatch(
+            articulations=tuple(articulation for articulation, _wrist in samples),
+            wrists=tuple(wrist for _articulation, wrist in samples),
+        )
 
     def diagnostics_for_frame(self, frame: HandFrame) -> HTSFrameDiagnostics | None:
         """Return a copy of the raw HTS records that produced ``frame``."""
@@ -474,13 +723,20 @@ class HTSSource(HandTrackingSource):
                         f"HTS UDP datagram for {pair[0].value} pair {pair[1:]} must contain exactly one "
                         f"wrist and one landmarks record; received {kinds}"
                     )
-        with self._lock:
-            for record in records:
-                self._states[record.handedness].update(
-                    record,
-                    receipt_timestamp=receipt_timestamp,
-                    pairing_key=self._pairing_key(record),
-                )
+        try:
+            with self._lock:
+                for record in records:
+                    self._states[record.handedness].update(
+                        record,
+                        receipt_timestamp=receipt_timestamp,
+                        pairing_key=self._pairing_key(record),
+                    )
+        except HTSBufferOverflowError as error:
+            # Direct protocol injection (used by diagnostics/tests) does not
+            # pass through ``_run``. Poison source health here as well so an
+            # overflow can never be mistaken for successful acquisition.
+            self._receiver_error = error
+            raise
         return tuple(records)
 
     def _handle_line(self, line: str, receipt_timestamp: float | None = None) -> None:

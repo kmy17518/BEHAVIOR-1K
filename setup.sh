@@ -4,10 +4,11 @@ set -e
 # Parse arguments
 HELP=false
 NEW_ENV=false
-NEW_ENV_NAME="behavior"
+NEW_ENV_NAME="behavior_dex"
 OMNIGIBSON=false
 BDDL=false
 JOYLO=false
+DEX_TELEOP=false
 DATASET=false
 PRIMITIVES=false
 EVAL=false
@@ -31,13 +32,14 @@ while [[ $# -gt 0 ]]; do
                 NEW_ENV_NAME="$2"
                 shift 2
             else
-                NEW_ENV_NAME="behavior"
+                NEW_ENV_NAME="behavior_dex"
                 shift 1
             fi
             ;;
         --omnigibson) OMNIGIBSON=true; shift ;;
         --bddl) BDDL=true; shift ;;
         --joylo) JOYLO=true; shift ;;
+        --dex-teleop) DEX_TELEOP=true; shift ;;
         --dataset) DATASET=true; shift ;;
         --primitives) PRIMITIVES=true; shift ;;
         --eval) EVAL=true; shift ;;
@@ -65,10 +67,11 @@ Usage: ./setup.sh [OPTIONS]
 
 Options:
   -h, --help              Display this help message
-  --new-env NEW_ENV_NAME  Create a new conda environment 'NEW_ENV_NAME' (default: behavior)
+  --new-env NEW_ENV_NAME  Create a new conda environment 'NEW_ENV_NAME' (default: behavior_dex)
   --omnigibson            Install OmniGibson (core physics simulator)
   --bddl                  Install BDDL (Behavior Domain Definition Language)
   --joylo                 Install JoyLo (teleoperation interface)
+  --dex-teleop            Install dex_teleop (dexterous hand teleoperation)
   --dataset               Download BEHAVIOR datasets (requires --omnigibson)
   --primitives            Install OmniGibson with primitives support
   --eval                  Install evaluation dependencies
@@ -81,7 +84,7 @@ Options:
   --confirm-no-conda      Skip confirmation prompt when not in a conda environment
 
 Example (core components): ./setup.sh --new-env --omnigibson --bddl --dataset
-Example (full customization): ./setup.sh --new-env my_env --omnigibson --bddl --dataset --joylo --eval --primitives --cuda-version 12.6
+Example (full customization): ./setup.sh --new-env my_env --omnigibson --bddl --dataset --joylo --dex-teleop --eval --primitives --cuda-version 12.6
 Example (non-interactive): ./setup.sh --new-env --omnigibson --dataset --accept-conda-tos --accept-nvidia-eula --accept-dataset-tos
 EOF
     exit 0
@@ -456,6 +459,13 @@ if [ "$JOYLO" = true ]; then
     python -m pip install -e "$WORKDIR/joylo"
 fi
 
+# Install dex_teleop and its direct retargeting dependencies
+if [ "$DEX_TELEOP" = true ]; then
+    echo "Installing dex_teleop..."
+    [ ! -d "dex_teleop" ] && { echo "ERROR: dex_teleop directory not found"; exit 1; }
+    python -m pip install -e "$WORKDIR/dex_teleop"
+fi
+
 # Install Eval
 if [ "$EVAL" = true ]; then
     # get torch version via pip and install corresponding torch-cluster
@@ -514,6 +524,7 @@ if [ "$NEW_ENV" = true ]; then echo "✓ Created conda environment '$NEW_ENV_NAM
 if [ "$OMNIGIBSON" = true ]; then echo "✓ Installed OmniGibson + Isaac Sim"; fi
 if [ "$BDDL" = true ]; then echo "✓ Installed BDDL"; fi
 if [ "$JOYLO" = true ]; then echo "✓ Installed JoyLo"; fi
+if [ "$DEX_TELEOP" = true ]; then echo "✓ Installed dex_teleop"; fi
 if [ "$PRIMITIVES" = true ]; then echo "✓ Installed OmniGibson with primitives support"; fi
 if [ "$EVAL" = true ]; then echo "✓ Installed evaluation support"; fi
 if [ "$DATASET" = true ]; then echo "✓ Downloaded datasets"; fi
