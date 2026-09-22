@@ -27,5 +27,7 @@
         (inroom ?obj1 ?obj2)
         (broken ?obj1)
         (grasped ?obj1 ?obj2)
+        (onshelf ?obj1 ?obj2)
+        (pegged ?obj1 ?obj2)
     )
 )

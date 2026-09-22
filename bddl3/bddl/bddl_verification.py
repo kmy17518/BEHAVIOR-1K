@@ -26,6 +26,7 @@ import sys
 
 import bddl
 from bddl.activity import Conditions
+from bddl.object_taxonomy import ObjectTaxonomy
 from bddl.data_generation.tm_submap_params import TM_SUBMAPS_TO_PARAMS
 from bddl.parsing import parse_problem, parse_domain
 
@@ -303,9 +304,42 @@ def is_specific_container_synset(synset):
     )
 
 
+_EXTENSION_TAXONOMY = None
+
+
+def _get_extension_taxonomy():
+    global _EXTENSION_TAXONOMY
+    if _EXTENSION_TAXONOMY is None:
+        _EXTENSION_TAXONOMY = ObjectTaxonomy()
+    return _EXTENSION_TAXONOMY
+
+
+class _SynsetPropsWithTaxonomyFallback(dict):
+    """Synset-to-properties view that falls back to taxonomy extension abilities.
+
+    Project taxonomy extension synsets (e.g. the ARAT apparatus) are absent from
+    the generated properties JSON; their abilities come from the ObjectTaxonomy
+    overlay instead.
+    """
+
+    def __missing__(self, synset):
+        return _get_extension_taxonomy().get_abilities(synset)
+
+
+def _scene_metadata_supplies_agent(init):
+    """Whether this task's scene binds objects (including the agent) via explicit task metadata.
+
+    Such tasks pin their room-anchored roots in the synthetic empty room and have no
+    floor object, so the agent has no (ontop agent.n.01_1 floor...) placement in :init.
+    """
+    return any(literal[0] == "inroom" and literal[-1] == "empty_room" for literal in init)
+
+
 def check_synset_predicate_alignment(atom, syns_to_props):
     if atom[0] == "ontop" and atom[1] == "agent.n.01_1":
         return
+
+    syns_to_props = _SynsetPropsWithTaxonomyFallback(syns_to_props)
 
     pred, *object_insts = atom
     objects = []
@@ -438,8 +472,9 @@ def check_synset_predicate_alignment(atom, syns_to_props):
             "substance" in syns_to_props[objects[1]]
         ), f"Inapplicable insource: {atom}"
     if pred == "inroom":
+        # Scene-metadata tasks may pin any fixed object in the synthetic empty room.
         assert (
-            "sceneObject" in syns_to_props[objects[0]]
+            "sceneObject" in syns_to_props[objects[0]] or objects[1] == "empty_room"
         ), f"Inapplicable inroom: {atom}"
 
 
@@ -628,8 +663,11 @@ def object_list_correctly_formatted(defn):
     - First through third-to-last terms match instance regex
     - First through third-to-last terms are of the same category as the ending term
     """
-    objects_section = defn.split("(:objects\n")[-1].split("\n    )")[0].split("\n")
+    objects_block = defn.split("(:objects", 1)[1].split("(:init", 1)[0]
+    objects_section = objects_block.rsplit(")", 1)[0].splitlines()
     for line in objects_section:
+        if not line.strip():
+            continue
         elements = line.strip().split(" ")
         category = elements[-1]
         assert (
@@ -663,9 +701,16 @@ def all_objects_appropriate(objects, init, goal):
     assert init_insts.issubset(
         instances
     ), f":init has object instances not in :objects: {init_insts.difference(instances)}"
-    assert instances.issubset(
-        init_insts
-    ), f":objects has object instances not in :init: {instances.difference(init_insts)}"
+    # Empty-init tasks are valid placeholders: explicit scene task metadata,
+    # rather than BDDL sampling predicates, supplies every declared object.
+    if init:
+        expected_instances = instances
+        if _scene_metadata_supplies_agent(init):
+            # The agent is bound through the scene task metadata, not :init.
+            expected_instances = instances - {"agent.n.01_1"}
+        assert expected_instances.issubset(
+            init_insts
+        ), f":objects has object instances not in :init: {expected_instances.difference(init_insts)}"
 
     goal_objects = _get_objects_in_goal(goal)
     assert goal_objects.issubset(
@@ -686,6 +731,14 @@ def all_objects_placed(init):
     insts = _get_instances_in_init(init)
     insts = set([inst for inst in insts if ["future", inst] not in init])
 
+    # Scene-metadata tasks bind object states from a saved scene instead of
+    # sampling, so a negative kinematic atom (e.g. the agent starting away from
+    # the apparatus) is a checkable start condition rather than a sampling bug,
+    # and the agent itself is placed by the scene metadata.
+    allow_negative_kinematics = _scene_metadata_supplies_agent(init)
+    if allow_negative_kinematics:
+        insts.discard("agent.n.01_1")
+
     in_room_check = True
     last_placed = None
     in_room_placed = set()
@@ -694,6 +747,8 @@ def all_objects_placed(init):
         for literal in init:
             # Skip not literals
             if literal[0] == "not":
+                if allow_negative_kinematics:
+                    continue
                 assert literal[1][0] not in {
                     "attached",
                     "draped",
@@ -760,8 +815,9 @@ def no_invalid_synsets(objects, init, goal, syns_to_props):
         ]
     )
     object_terms = object_insts.union(categories)
+    taxonomy = ObjectTaxonomy()
     for proposed_syn in object_terms:
-        assert (proposed_syn in syns_to_props) or (
+        assert (proposed_syn in syns_to_props) or taxonomy.is_valid_synset(proposed_syn) or (
             proposed_syn == "agent.n.01"
         ), f"Invalid synset: {proposed_syn}"
 
@@ -796,8 +852,10 @@ def future_and_real_present(objects, init, goal):
             and future_objects.difference(real_objects) == set(["water.n.06_1"])
         )
     ), f"{future_objects.difference(real_objects)} in future clauses but not real clauses (and doesn't satisfy washer/water exception)"
+    # Every BehaviorTask owns an agent, so this is an always-successful goal
+    # for deliberately empty-init placeholder task definitions.
     assert real_objects.issubset(
-        future_objects.union(init_objects)
+        future_objects.union(init_objects).union({"agent.n.01_1"})
     ), f"{real_objects.difference(future_objects)} in real clauses but not future clauses or init"
 
 
@@ -842,6 +900,12 @@ def no_uncontrolled_category(activity, defn):
 
 
 def agent_present(init):
+    if not init:
+        return
+    # Scene-metadata tasks have no floor object; the agent is placed by the
+    # explicit scene task metadata rather than an (ontop agent ...) atom.
+    if _scene_metadata_supplies_agent(init):
+        return
     for literal in init:
         if (literal[0] == "ontop") and (literal[1] == "agent.n.01_1"):
             break
@@ -870,11 +934,16 @@ def no_misaligned_synsets_predicates(init, goal, syns_to_props):
 
 
 def no_unnecessary_specific_containers(objects, init, goal, syns_to_props):
+    taxonomy = ObjectTaxonomy()
+
+    def properties(synset):
+        return syns_to_props[synset] if synset in syns_to_props else taxonomy.get_abilities(synset)
+
     specific_fillable_containers = [
         obj_cat
         for obj_cat in objects.keys()
         if obj_cat != "agent.n.01"
-        and "fillable" in syns_to_props[obj_cat]
+        and "fillable" in properties(obj_cat)
         and is_specific_container_synset(obj_cat)
     ]
 
@@ -912,8 +981,12 @@ def no_unnecessary_specific_containers(objects, init, goal, syns_to_props):
 
 
 def no_substances_with_multiple_instances(objects, syns_to_props):
+    taxonomy = ObjectTaxonomy()
     for cat, insts in objects.items():
-        if "substance" in syns_to_props[cat]:
+        if cat == "agent.n.01":
+            continue
+        properties = syns_to_props[cat] if cat in syns_to_props else taxonomy.get_abilities(cat)
+        if "substance" in properties:
             assert (
                 len(insts) == 1
             ), f"Substance {cat} with {len(insts)} instances instead of 1"
