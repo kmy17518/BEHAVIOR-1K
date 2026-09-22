@@ -194,6 +194,21 @@ class AssistedGraspSupervisor:
         self._open_baseline: dict[str, float] = {}
         self._flexion_by_digit: dict[str, tuple[str, ...]] = {}
         self._weld_offset: tuple[float, float, float] | None = None
+        self._last_event: dict | None = None
+
+    @property
+    def arm(self) -> str:
+        return self._arm
+
+    @property
+    def control_dt(self) -> float:
+        return self._dt
+
+    @property
+    def last_event(self) -> dict | None:
+        """Structured event emitted by the most recent :meth:`step`, if any."""
+
+        return None if self._last_event is None else dict(self._last_event)
 
     @property
     def frozen_fingers(self) -> dict[str, float] | None:
@@ -206,6 +221,7 @@ class AssistedGraspSupervisor:
 
     def reset(self) -> None:
         """Clear decision windows and drop any active weld (no-op when none exists)."""
+        self._last_event = None
         self._pending_key = None
         self._pending_elapsed = 0.0
         self._release_elapsed = 0.0
@@ -220,6 +236,7 @@ class AssistedGraspSupervisor:
                 (what would be commanded without any freeze)
             measured_fingers: the robot's current measured finger joint positions by joint name
         """
+        self._last_event = None
         held = self.robot._ag_obj_in_hand[self._arm]
         if held is not None:
             if self._frozen_fingers is None:
@@ -244,6 +261,7 @@ class AssistedGraspSupervisor:
                 self.robot.release_grasp_immediately(arm=self._arm)
                 self._release_elapsed = 0.0
                 self._clear_freeze()
+                self._last_event = {"kind": "broke", "object": held_name, "drift_m": drift}
                 self._say(f"assisted grasp broke on {held_name} (weld separated {drift * 100:.0f} cm)")
                 return
         engaged = {digit for digit in self._grasp_digits if self._digit_engaged(digit, live_fingers)}
@@ -257,6 +275,7 @@ class AssistedGraspSupervisor:
         self.robot.release_grasp_immediately(arm=self._arm)
         self._release_elapsed = 0.0
         self._clear_freeze()
+        self._last_event = {"kind": "released", "object": held_name}
         self._say(f"assisted grasp released {held_name}")
 
     def _digit_engaged(self, digit: str, live_fingers: Mapping[str, float]) -> bool:
@@ -302,7 +321,37 @@ class AssistedGraspSupervisor:
         self._capture_freeze(digits, live_fingers, measured_fingers)
         self._weld_offset = self._held_offset(held)
         self._author_weld_break_limits()
+        self._last_event = {"kind": "adopted", "object": held.name, "digits": sorted(digits)}
         self._say("assisted grasp adopted an existing weld; all fingers hold until the hand opens")
+
+    def diagnostic_state(self) -> dict:
+        """Return the decision and weld state in a JSON-safe representation."""
+
+        held = self.robot._ag_obj_in_hand[self._arm]
+        drift = None
+        target_link_name = None
+        if held is not None:
+            params = getattr(self.robot, "_ag_obj_constraint_params", {}).get(self._arm)
+            target_link_name = None if params is None else params.get("target_link_name")
+            if self._weld_offset is not None:
+                offset = self._held_offset(held)
+                drift = math.sqrt(sum((a - b) ** 2 for a, b in zip(offset, self._weld_offset)))
+        return {
+            "status": "held" if held is not None else ("pending" if self._pending_key is not None else "idle"),
+            "held_object": None if held is None else held.name,
+            "target_link_name": target_link_name,
+            "grasp_digits": sorted(self._grasp_digits),
+            "pending_object": None if self._pending_key is None else self._pending_key[0],
+            "pending_link_name": None if self._pending_key is None else self._pending_key[1],
+            "pending_elapsed_s": self._pending_elapsed,
+            "release_elapsed_s": self._release_elapsed,
+            "weld_drift_m": drift,
+        }
+
+    def classify_hand_link(self, link_name: str):
+        """Expose the shared hand-link classification to diagnostic collectors."""
+
+        return self._semantics.classify_link(link_name)
 
     def _held_offset(self, held) -> tuple[float, float, float]:
         """The held object's position in the palm frame; constant while the weld is intact."""
@@ -354,6 +403,12 @@ class AssistedGraspSupervisor:
             self._capture_freeze(digits, live_fingers, measured_fingers)
             self._weld_offset = self._held_offset(obj)
             self._author_weld_break_limits()
+            self._last_event = {
+                "kind": "welded",
+                "object": obj.name,
+                "target_link_name": link_name,
+                "digits": sorted(digits),
+            }
             self._say(f"assisted grasp welded {obj.name}:{link_name} via {'+'.join(sorted(digits))}")
 
     def _contacts_by_object_link(self):

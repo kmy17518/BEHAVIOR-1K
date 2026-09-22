@@ -121,6 +121,7 @@ def test_extrinsics_match_urdf_optical_and_omnigibson_frames():
     root = ET.parse(CAMERA_URDF).getroot()
     extrinsics = yaml.safe_load(EXTRINSICS.read_text(encoding="utf-8"))
     expected_forward = np.asarray(extrinsics["camera_defaults"]["principal_ray_in_parent"], dtype=float)
+    assert np.allclose(expected_forward, [1.0, 0.0, 0.0])  # Sharpa palmar/table-facing normal
     body_to_optical = Rotation.from_euler(
         "xyz", extrinsics["thumb_camera"]["body_to_optical"]["rpy"]
     )

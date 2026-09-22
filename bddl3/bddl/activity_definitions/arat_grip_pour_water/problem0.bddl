@@ -1,0 +1,28 @@
+(define (problem arat_grip_pour_water-0)
+  (:domain behavior-1k)
+  (:objects
+    arat_box.n.01_1 - arat_box.n.01
+    arat_cup.n.01_1 arat_cup.n.01_2 - arat_cup.n.01
+    breakfast_table.n.01_1 - breakfast_table.n.01
+    water.n.06_1 - water.n.06
+    agent.n.01_1 - agent.n.01
+  )
+  (:init
+    (inroom breakfast_table.n.01_1 empty_room)
+    (open arat_box.n.01_1)
+    (ontop arat_box.n.01_1 breakfast_table.n.01_1)
+    (ontop arat_cup.n.01_1 arat_box.n.01_1)
+    (ontop arat_cup.n.01_2 arat_box.n.01_1)
+    (filled arat_cup.n.01_1 water.n.06_1)
+    (not (filled arat_cup.n.01_2 water.n.06_1))
+  )
+  ; Completion: all water transferred to the second cup and the first cup released.
+  ; Spill accounting and the 0-3 ARAT score are computed by the scorer layer.
+  (:goal
+    (and
+      (filled ?arat_cup.n.01_2 ?water.n.06_1)
+      (not (filled ?arat_cup.n.01_1 ?water.n.06_1))
+      (not (touching ?arat_cup.n.01_1 ?agent.n.01_1))
+    )
+  )
+)

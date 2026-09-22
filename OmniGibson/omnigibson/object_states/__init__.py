@@ -18,9 +18,11 @@ from omnigibson.object_states.max_temperature import MaxTemperature
 from omnigibson.object_states.next_to import NextTo
 from omnigibson.object_states.object_state_base import REGISTERED_OBJECT_STATES
 from omnigibson.object_states.on_fire import OnFire
+from omnigibson.object_states.on_shelf import OnShelf
 from omnigibson.object_states.on_top import OnTop
 from omnigibson.object_states.open_state import Open
 from omnigibson.object_states.overlaid import Overlaid
+from omnigibson.object_states.pegged import Pegged
 from omnigibson.object_states.particle import ParticleRequirement
 from omnigibson.object_states.particle_modifier import ParticleApplier, ParticleRemover
 from omnigibson.object_states.particle_source_or_sink import ParticleSink, ParticleSource
@@ -58,9 +60,11 @@ __all__ = [
     "NextTo",
     "ObjectsInFOVOfRobot",
     "OnFire",
+    "OnShelf",
     "OnTop",
     "Open",
     "Overlaid",
+    "Pegged",
     "ParticleApplier",
     "ParticleRemover",
     "ParticleRequirement",

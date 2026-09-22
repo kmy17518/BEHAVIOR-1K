@@ -24,6 +24,7 @@ import bddl
 DEFAULT_HIERARCHY_FILE = (
     pathlib.Path(__file__).parent / "generated_data/output_hierarchy_properties.json"
 )
+TAXONOMY_EXTENSION_FILE = pathlib.Path(__file__).parent / "generated_data/arat_taxonomy.json"
 
 
 class ObjectTaxonomy(object):
@@ -32,6 +33,44 @@ class ObjectTaxonomy(object):
 
     def refresh_hierarchy_file(self):
         self.taxonomy = self._parse_taxonomy(DEFAULT_HIERARCHY_FILE.read_text())
+        if TAXONOMY_EXTENSION_FILE.is_file():
+            self._apply_extension(json.loads(TAXONOMY_EXTENSION_FILE.read_text()))
+
+    def _apply_extension(self, entries):
+        """Add project-local leaf synsets without regenerating the WordNet hierarchy.
+
+        Extension nodes inherit their parent's propagated abilities and may add
+        or override individual abilities. Categories remain explicit so an
+        ARAT BDDL synset resolves directly to its runtime asset category.
+        """
+
+        known_categories = {
+            category
+            for synset in self.taxonomy.nodes
+            for category in self.taxonomy.nodes[synset]["categories"]
+        }
+        for entry in entries:
+            name = entry["name"]
+            parent = entry["parent"]
+            categories = list(entry.get("categories", []))
+            if name in self.taxonomy:
+                raise ValueError(f"Taxonomy extension duplicates synset {name}")
+            if parent not in self.taxonomy:
+                raise ValueError(f"Taxonomy extension parent does not exist: {parent}")
+            duplicates = known_categories.intersection(categories)
+            if duplicates:
+                raise ValueError(f"Taxonomy extension duplicates categories: {sorted(duplicates)}")
+
+            abilities = copy.deepcopy(self.taxonomy.nodes[parent]["abilities"])
+            abilities.update(copy.deepcopy(entry.get("abilities", {})))
+            self.taxonomy.add_node(
+                name,
+                categories=categories,
+                substances=list(entry.get("substances", [])),
+                abilities=abilities,
+            )
+            self.taxonomy.add_edge(parent, name)
+            known_categories.update(categories)
 
     @staticmethod
     def _parse_taxonomy(json_str):

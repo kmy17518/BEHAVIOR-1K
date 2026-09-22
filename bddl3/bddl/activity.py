@@ -113,11 +113,10 @@ def get_initial_conditions(conds, scope, generate_ground_options=True):
         generate_ground_options (bool): whether to generate ground goal options
 
     Returns:
-        list<bddl.condition_evaluation.HEAD>: compiled conditions if initial
-                                                condition definition is not
-                                                empty else None
+        list<bddl.condition_evaluation.HEAD>: compiled conditions. An empty
+            ``:init`` section produces an empty list.
     """
-    if bool(conds.parsed_initial_conditions[0]):
+    if conds.parsed_initial_conditions and bool(conds.parsed_initial_conditions[0]):
         initial_conditions = compile_state(
             [
                 cond
@@ -129,6 +128,7 @@ def get_initial_conditions(conds, scope, generate_ground_options=True):
             generate_ground_options=generate_ground_options,
         )
         return initial_conditions
+    return []
 
 
 def get_goal_conditions(conds, scope, generate_ground_options=True):
@@ -142,7 +142,7 @@ def get_goal_conditions(conds, scope, generate_ground_options=True):
         list<bddl.condition_evaluation.HEAD>: compiled conditions if goal condition
                                                 definition is not empty else None
     """
-    if bool(conds.parsed_goal_conditions[0]):
+    if conds.parsed_goal_conditions and bool(conds.parsed_goal_conditions[0]):
         goal_conditions = compile_state(
             conds.parsed_goal_conditions,
             scope=scope,

@@ -227,6 +227,22 @@ class Grasped(BinaryPredicate):
     pass
 
 
+class OnShelf(BinaryPredicate):
+    """obj1 rests on the designated shelf surface (support link) of obj2, not on another link.
+
+    Used by the ARAT tasks, where the release target is the top of the ARAT box base shell
+    while the same object's open lid is the starting support.
+    """
+
+    pass
+
+
+class Pegged(BinaryPredicate):
+    """obj1 (an object with a central bore, e.g. tube or washer) is placed over the peg obj2."""
+
+    pass
+
+
 # ---------------------------------------------------------------------------
 # Token-to-predicate mapping: BDDL token string -> predicate class
 # ---------------------------------------------------------------------------
@@ -260,4 +276,6 @@ TOKEN_TO_PREDICATE = {
     "insource": InSource,
     "inroom": InRoom,
     "grasped": Grasped,
+    "onshelf": OnShelf,
+    "pegged": Pegged,
 }

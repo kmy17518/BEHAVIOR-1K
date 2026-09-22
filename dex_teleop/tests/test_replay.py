@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import h5py
+import numpy as np
 import pytest
 
 from dex_teleop.omnigibson.replay import (
@@ -9,6 +10,7 @@ from dex_teleop.omnigibson.replay import (
     _parser,
     RecordingInfo,
     build_replay_camera_configs,
+    compose_replay_frame,
     default_output_path,
     get_episode_lengths,
     inspect_recording,
@@ -60,18 +62,41 @@ def test_default_video_path_includes_episode_id(tmp_path):
 
 
 @pytest.mark.parametrize("camera_rig_name", ["arat_default", "arat_sharpa_v1"])
-def test_replay_camera_configs_enable_all_four_rgb_observations(camera_rig_name):
+def test_replay_camera_configs_enable_main_and_corner_rgb_observations(camera_rig_name):
     cameras = build_replay_camera_configs(camera_rig_name)
 
-    assert {camera["name"] for camera in cameras} == {
+    expected = {
         "arat_left_shoulder_camera",
         "arat_right_shoulder_camera",
         "arat_wrist_camera_thumb",
         "arat_wrist_camera_pinky",
     }
+    if camera_rig_name == "arat_default":
+        expected.add("arat_mobile_chest_camera")
+    assert {camera["name"] for camera in cameras} == expected
     assert all(camera["modalities"] == ["rgb"] for camera in cameras)
     assert all(camera["include_in_obs"] is True for camera in cameras)
     assert all(camera["sensor_kwargs"]["viewport_name"] is None for camera in cameras)
+
+
+def test_replay_frame_uses_launch_style_main_and_corner_layout():
+    def solid(color, shape):
+        return np.broadcast_to(np.asarray(color, dtype=np.uint8), (*shape, 3)).copy()
+
+    frame = compose_replay_frame(
+        main=solid((10, 10, 10), (6, 6)),
+        left_shoulder=solid((20, 0, 0), (3, 3)),
+        right_shoulder=solid((0, 20, 0), (3, 3)),
+        thumb_wrist=solid((0, 0, 20), (3, 3)),
+        pinky_wrist=solid((20, 20, 0), (3, 3)),
+    )
+
+    assert frame.shape == (6, 12, 3)
+    assert np.all(frame[:3, :3] == (20, 0, 0))
+    assert np.all(frame[3:, :3] == (0, 0, 20))
+    assert np.all(frame[:, 3:9] == (10, 10, 10))
+    assert np.all(frame[:3, 9:] == (0, 20, 0))
+    assert np.all(frame[3:, 9:] == (20, 20, 0))
 
 
 def test_get_episode_lengths_ignores_non_numeric_demo_groups(tmp_path):

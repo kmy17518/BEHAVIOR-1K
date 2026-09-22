@@ -1,0 +1,23 @@
+(define (problem arat_grasp_block_10cm-0)
+  (:domain behavior-1k)
+  (:objects
+    arat_box.n.01_1 - arat_box.n.01
+    arat_wooden_block.n.01_1 - arat_wooden_block.n.01
+    breakfast_table.n.01_1 - breakfast_table.n.01
+    agent.n.01_1 - agent.n.01
+  )
+  (:init
+    (inroom breakfast_table.n.01_1 empty_room)
+    (open arat_box.n.01_1)
+    (ontop arat_box.n.01_1 breakfast_table.n.01_1)
+    (ontop arat_wooden_block.n.01_1 arat_box.n.01_1)
+  )
+  ; Completion: the object rests at its ARAT target and the hand has released it.
+  ; The 0-3 ARAT score (timing, hand-movement quality) is computed by the scorer layer.
+  (:goal
+    (and
+      (onshelf ?arat_wooden_block.n.01_1 ?arat_box.n.01_1)
+      (not (touching ?arat_wooden_block.n.01_1 ?agent.n.01_1))
+    )
+  )
+)

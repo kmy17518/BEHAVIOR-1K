@@ -1,0 +1,22 @@
+<?xml version="1.0" ?>
+<robot name="cricket_ball">
+  <link name="base_link">
+    <inertial>
+      <origin xyz="0 0 0.0355" rpy="0 0 0"/>
+      <mass value="0.159"/>
+      <inertia ixx="0.0001335865" ixy="0" ixz="0" iyy="0.0001335865" iyz="0" izz="0.0001335865"/>
+    </inertial>
+    <visual name="visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/visual.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="sphere">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/sphere.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+  </link>
+</robot>

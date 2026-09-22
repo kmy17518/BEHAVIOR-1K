@@ -1,0 +1,26 @@
+(define (problem arat_pinch_ball_bearing_index-0)
+  (:domain behavior-1k)
+  (:objects
+    arat_box.n.01_1 - arat_box.n.01
+    arat_ball_bearing.n.01_1 - arat_ball_bearing.n.01
+    arat_tin.n.01_1 arat_tin.n.01_2 - arat_tin.n.01
+    breakfast_table.n.01_1 - breakfast_table.n.01
+    agent.n.01_1 - agent.n.01
+  )
+  (:init
+    (inroom breakfast_table.n.01_1 empty_room)
+    (open arat_box.n.01_1)
+    (ontop arat_box.n.01_1 breakfast_table.n.01_1)
+    (ontop arat_tin.n.01_1 arat_box.n.01_1)
+    (ontop arat_tin.n.01_2 arat_box.n.01_1)
+    (ontop arat_ball_bearing.n.01_1 arat_tin.n.01_1)
+  )
+  ; Completion: the object rests at its ARAT target and the hand has released it.
+  ; The 0-3 ARAT score (timing, hand-movement quality) is computed by the scorer layer.
+  (:goal
+    (and
+      (ontop ?arat_ball_bearing.n.01_1 ?arat_tin.n.01_2)
+      (not (touching ?arat_ball_bearing.n.01_1 ?agent.n.01_1))
+    )
+  )
+)

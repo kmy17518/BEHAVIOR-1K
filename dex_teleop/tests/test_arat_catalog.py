@@ -25,16 +25,23 @@ from dex_teleop.omnigibson.launcher import (
     _camera_layout_panel_dock,
     _parser,
     _finalize_recording,
+    _reset_and_wait_for_tracking,
+    _resolve_tracking_selection,
     _reset_arat_box,
     _reset_goal_status_labels,
+    _set_hand_tracking_metadata,
     _set_viewport_resolution,
+    _shutdown_omnigibson,
     _show_robot_end_effectors,
     _update_goal_status_labels,
     _validate_loaded_apparatus,
     build_environment_config,
     default_recording_path,
+    main,
     recording_staging_path,
 )
+from dex_teleop.omnigibson.hand_tracking_recording import HandTrackingRecordingSession
+from dex_teleop.tracking import SourceUnavailableError
 
 
 def test_catalog_has_required_task_and_layout_counts():
@@ -238,7 +245,7 @@ def test_camera_rig_declares_calibration_docking_and_toggle_cycles():
 
 
 def test_arat_default_camera_rig_is_default_and_selectable():
-    assert set(camera_rig_names()) == {"arat_sharpa_v1", "arat_default"}
+    assert set(camera_rig_names()) == {"arat_sharpa_v1", "arat_default", "hand_bench"}
     camera_rig = load_camera_rig("arat_default")
 
     assert layout_camera_ids(camera_rig, "teleop") == (
@@ -310,8 +317,8 @@ def test_arat_default_camera_rig_is_default_and_selectable():
     assert cameras["arat_left_shoulder_camera"]["sensor_kwargs"]["image_height"] == 256
     for name, lateral_offset in (("arat_wrist_camera_thumb", 0.072), ("arat_wrist_camera_pinky", -0.072)):
         assert cameras[name]["relative_prim_path"].startswith(f"{ROBOT_PRIM_PATH}/right_hand_C_MC/")
-        assert cameras[name]["position"] == [-0.055, lateral_offset, 0.090]
-        assert cameras[name]["orientation"] == [0.707106781187, -0.707106781187, 0.0, 0.0]
+        assert cameras[name]["position"] == [-0.035, lateral_offset, 0.090]
+        assert cameras[name]["orientation"] == [0.5, -0.5, -0.5, 0.5]
         assert cameras[name]["sensor_kwargs"]["image_width"] == 640
         assert cameras[name]["sensor_kwargs"]["image_height"] == 480
         assert cameras[name]["sensor_kwargs"]["focal_length"] == 2.807438
@@ -412,6 +419,170 @@ def test_launcher_hand_pose_recording_is_opt_in():
     assert enabled_args.record_hand_poses is True
 
 
+def test_launcher_accepts_assisted_grasp_diagnostic_controls():
+    catalog = AratTaskCatalog()
+
+    default_args = _parser(catalog).parse_args(["--task", "arat_grasp_cricket_ball"])
+    args = _parser(catalog).parse_args(
+        [
+            "--task",
+            "arat_grasp_cricket_ball",
+            "--assisted-grasp",
+            "--assisted-grasp-debug",
+            "--assisted-grasp-break-force",
+            "none",
+            "--assisted-grasp-break-torque",
+            "45",
+            "--assisted-grasp-squeeze-bias-rad",
+            "0.02",
+        ]
+    )
+
+    assert default_args.assisted_grasp_debug is False
+    assert default_args.assisted_grasp_break_force == 100.0
+    assert default_args.assisted_grasp_break_torque == 30.0
+    assert default_args.assisted_grasp_squeeze_bias_rad == 0.05
+    assert args.assisted_grasp_debug is True
+    assert args.assisted_grasp_break_force is None
+    assert args.assisted_grasp_break_torque == 45.0
+    assert args.assisted_grasp_squeeze_bias_rad == 0.02
+
+
+def test_assisted_grasp_debug_requires_assisted_grasp():
+    with pytest.raises(SystemExit, match="requires --assisted-grasp"):
+        main(["--task", "arat_grasp_cricket_ball", "--assisted-grasp-debug"])
+
+
+def test_launcher_tracking_defaults_preserve_the_quest_hts_preset():
+    args = _parser(AratTaskCatalog()).parse_args(["--task", "arat_grasp_block_10cm"])
+
+    selection = _resolve_tracking_selection(args)
+
+    assert args.source is None
+    assert selection.hand_source == "quest"
+    assert selection.wrist_source == "quest"
+    assert selection.articulation_sources == ("quest",)
+    assert selection.wrist_sources == ("quest",)
+
+
+def test_launcher_accepts_manus_quest_control_and_native_rate_comparison():
+    args = _parser(AratTaskCatalog()).parse_args(
+        [
+            "--task",
+            "arat_grasp_block_10cm",
+            "--hand-source",
+            "manus",
+            "--wrist-source",
+            "quest",
+            "--record-hand-source",
+            "quest",
+            "--record-hand-source",
+            "hts",
+            "--retargeter",
+            "dexpilot",
+        ]
+    )
+
+    selection = _resolve_tracking_selection(args)
+
+    assert selection.hand_source == "manus"
+    assert selection.wrist_source == "quest"
+    assert selection.record_hand_sources == ("quest",)
+    assert selection.articulation_sources == ("manus", "quest")
+    assert args.retargeter == "dexpilot"
+
+    vibe_args = _parser(AratTaskCatalog()).parse_args(
+        ["--task", "arat_grasp_block_10cm", "--wrist-source", "vibe"]
+    )
+    assert _resolve_tracking_selection(vibe_args).wrist_source == "vive"
+
+
+def test_launcher_rejects_mixing_legacy_and_component_control_flags():
+    args = _parser(AratTaskCatalog()).parse_args(
+        [
+            "--task",
+            "arat_grasp_block_10cm",
+            "--source",
+            "hts",
+            "--hand-source",
+            "manus",
+        ]
+    )
+
+    with pytest.raises(SystemExit, match="cannot be combined"):
+        _resolve_tracking_selection(args)
+
+
+def test_launcher_reset_waits_for_every_configured_tracking_role():
+    calls = []
+    expected_snapshot = object()
+
+    class Worker:
+        def reset(self):
+            calls.append("reset")
+
+        def wait_for_first(self, timeout):
+            calls.append(("wait", timeout))
+            return expected_snapshot
+
+    assert (
+        _reset_and_wait_for_tracking(Worker(), 3.5, context="test boundary")
+        is expected_snapshot
+    )
+    assert calls == ["reset", ("wait", 3.5)]
+
+
+def test_launcher_tracking_readiness_preserves_missing_role_detail():
+    class Worker:
+        def reset(self):
+            pass
+
+        def wait_for_first(self, _timeout):
+            raise SourceUnavailableError("missing record-only articulation source 'quest'")
+
+    with pytest.raises(
+        SourceUnavailableError,
+        match="test boundary: missing record-only articulation source 'quest'",
+    ):
+        _reset_and_wait_for_tracking(Worker(), 1.0, context="test boundary")
+
+
+@pytest.mark.parametrize(
+    ("option", "value"),
+    (
+        ("--maximum-frame-age", "nan"),
+        ("--maximum-frame-age", "inf"),
+        ("--initial-frame-timeout", "nan"),
+        ("--initial-frame-timeout", "inf"),
+    ),
+)
+def test_launcher_rejects_nonfinite_tracking_timeouts(option, value):
+    with pytest.raises(SystemExit, match="source/frame timeouts"):
+        main(["--task", "arat_grasp_block_10cm", option, value])
+
+
+def test_launcher_records_source_and_retargeter_configuration_metadata():
+    args = _parser(AratTaskCatalog()).parse_args(["--task", "arat_grasp_block_10cm"])
+    source = object()
+
+    class _Worker:
+        articulation_streams = {"quest": "articulation.quest"}
+        wrist_streams = {"quest": "wrist.quest"}
+        wrist_source = "quest"
+        control_wrist_stream = "wrist.quest.control"
+        retargeting_stream = "adaptive.quest+quest"
+        sources = {"quest": source}
+
+    session = HandTrackingRecordingSession()
+    _set_hand_tracking_metadata(session, _Worker(), args)
+    metadata = session.writer_kwargs()["stream_metadata"]
+
+    assert metadata["articulation.quest"]["provider"] == "Quest Hand Tracking Streamer"
+    assert metadata["wrist.quest"]["endpoint"] == "udp://0.0.0.0:9000"
+    assert metadata["wrist.quest.control"]["maximum_skew_seconds"] == 0.05
+    assert metadata["adaptive.quest+quest"]["configuration"]["sha256"] != "unavailable"
+
+
 def test_launcher_arm_marker_visualization_is_opt_in_with_workspace_alias():
     catalog = AratTaskCatalog()
 
@@ -478,6 +649,33 @@ def test_sigint_requests_graceful_shutdown_without_raising():
     assert shutdown.requested is True
 
 
+@pytest.mark.parametrize("exit_code", (None, 0))
+def test_omnigibson_successful_prelaunch_shutdown_is_not_an_error(exit_code):
+    class OmniGibson:
+        shutdown_calls = 0
+
+        def shutdown(self):
+            self.shutdown_calls += 1
+            raise SystemExit(exit_code)
+
+    omnigibson = OmniGibson()
+    _shutdown_omnigibson(omnigibson)
+
+    assert omnigibson.shutdown_calls == 1
+
+
+@pytest.mark.parametrize("exit_code", (2, "failure"))
+def test_omnigibson_failed_prelaunch_shutdown_is_propagated(exit_code):
+    class OmniGibson:
+        def shutdown(self):
+            raise SystemExit(exit_code)
+
+    with pytest.raises(SystemExit) as caught:
+        _shutdown_omnigibson(OmniGibson())
+
+    assert caught.value.code == exit_code
+
+
 def test_recording_is_atomically_published_after_close(tmp_path):
     output_path = tmp_path / "demo.hdf5"
     staging_path = recording_staging_path(output_path, process_id=123)
@@ -513,6 +711,31 @@ def test_failed_recording_close_preserves_previous_output(tmp_path):
 
     assert output_path.read_bytes() == b"old valid recording"
     assert staging_path.read_bytes() == b"incomplete recording"
+
+
+def test_preflight_failure_can_close_staging_without_publishing(tmp_path):
+    output_path = tmp_path / "demo.hdf5"
+    staging_path = recording_staging_path(output_path, process_id=123)
+    output_path.write_bytes(b"old valid recording")
+    staging_path.write_bytes(b"closed diagnostic recording")
+
+    class RecordingEnvironment:
+        saved = False
+
+        def save_data(self):
+            self.saved = True
+
+    recording_env = RecordingEnvironment()
+    _finalize_recording(
+        recording_env,
+        staging_path,
+        output_path,
+        publish=False,
+    )
+
+    assert recording_env.saved is True
+    assert output_path.read_bytes() == b"old valid recording"
+    assert staging_path.read_bytes() == b"closed diagnostic recording"
 
 
 def test_failed_evaluation_append_preserves_previous_output(tmp_path):

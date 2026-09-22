@@ -168,7 +168,7 @@ def leaf_inroom_conds(raw_cond, synsets: Set[str]) -> List[Tuple[str, str]]:
     Return a list of all inroom conditions in the subtree of raw_cond
     """
     ret = []
-    if isinstance(raw_cond, list):
+    if isinstance(raw_cond, list) and raw_cond:
         for child in raw_cond:
             ret.extend(leaf_inroom_conds(child, synsets))
         if raw_cond[0] == "inroom":

@@ -1,9 +1,10 @@
-"""One-process ARAT BehaviorTask launcher for landmark hand teleoperation."""
+"""One-process ARAT launcher for multi-source dexterous hand teleoperation."""
 
 from __future__ import annotations
 
 import argparse
-from dataclasses import replace
+from dataclasses import dataclass, replace
+import hashlib
 import logging
 import math
 import os
@@ -50,12 +51,32 @@ from dex_teleop.emg import (
     merge_emg_recording,
     write_action_timing_episodes,
 )
-from dex_teleop.omnigibson.evaluation_trace import build_step_evaluation, write_evaluation_episodes
-from dex_teleop.omnigibson.hand_pose_recording import HumanHandPoseSample, write_hand_pose_episodes
-from dex_teleop.retargeting import LandmarkRetargeter
-from dex_teleop.runtime import TrackingRetargetingWorker
-from dex_teleop.tracking import HTSSource
+from dex_teleop.omnigibson.assisted_grasp_trace import write_assisted_grasp_episodes
+from dex_teleop.omnigibson.evaluation_trace import (
+    build_step_evaluation,
+    write_evaluation_episodes,
+)
+from dex_teleop.omnigibson.hand_pose_recording import (
+    HumanHandPoseSample,
+    write_hand_pose_episodes,
+)
+from dex_teleop.omnigibson.hand_tracking_recording import HandTrackingRecordingSession
+from dex_teleop.retargeting import SUPPORTED_RETARGETERS, create_hand_retargeter
+from dex_teleop.runtime import MultiSourceTrackingWorker, TrackingRetargetingWorker
+from dex_teleop.tracking import (
+    ArticulationFrameTransform,
+    HandObservationFuser,
+    HTSSource,
+    SourceUnavailableError,
+)
+from dex_teleop.tracking.manus import (
+    ManusIntegratedSource,
+    default_manus_bridge_path,
+    discover_manus_sdk,
+)
+from dex_teleop.tracking.manus_calibration import ManusCoreCalibration
 from dex_teleop.tracking.ovxr import create_ovxr_source
+from dex_teleop.tracking.vive import ViveWristSource
 from dex_teleop.types import Handedness
 
 
@@ -64,6 +85,33 @@ ROBOT_COMPOSED_MODEL = f"{ROBOT_MODEL}_{ROBOT_END_EFFECTOR}"
 ROBOT_PRIM_PATH = f"/controllable__{ROBOT_COMPOSED_MODEL}__{ROBOT_NAME}"
 CAMERA_TOGGLE_DEBOUNCE_SECONDS = 0.25
 DEFAULT_RECORDING_ROOT = Path(__file__).resolve().parents[3] / "outputs" / "recordings"
+
+
+def _optional_positive_float(value: str) -> float | None:
+    if value.lower() in {"none", "off", "disabled"}:
+        return None
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise argparse.ArgumentTypeError("must be positive and finite, or 'none'")
+    return parsed
+
+
+@dataclass(frozen=True)
+class TrackingSelection:
+    """Explicit control and record-only tracking-provider selection."""
+
+    hand_source: str
+    wrist_source: str
+    record_hand_sources: tuple[str, ...]
+    record_wrist_sources: tuple[str, ...]
+
+    @property
+    def articulation_sources(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys((self.hand_source, *self.record_hand_sources)))
+
+    @property
+    def wrist_sources(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys((self.wrist_source, *self.record_wrist_sources)))
 
 
 class GracefulShutdown:
@@ -79,8 +127,21 @@ class GracefulShutdown:
 
     def __call__(self, _signum, _frame) -> None:
         if not self.requested:
-            print("\nCtrl+C received; finishing the current simulator operation and saving the recording...", flush=True)
+            print(
+                "\nCtrl+C received; finishing the current simulator operation and saving the recording...",
+                flush=True,
+            )
         self.requested = True
+
+
+def _shutdown_omnigibson(og_module) -> None:
+    """Close OmniGibson without treating its successful pre-launch exit as an error."""
+
+    try:
+        og_module.shutdown()
+    except SystemExit as error:
+        if error.code not in (None, 0):
+            raise
 
 
 def _parser(catalog: AratTaskCatalog) -> argparse.ArgumentParser:
@@ -94,12 +155,134 @@ def _parser(catalog: AratTaskCatalog) -> argparse.ArgumentParser:
         choices=camera_rig_names(),
         help="Override the task catalog's camera rig for this launch",
     )
-    parser.add_argument("--source", choices=("hts", "ovxr"), default="hts")
-    parser.add_argument("--hand-model", choices=("shadow", "sharpa", "wuji"), default="sharpa")
+    parser.add_argument(
+        "--source",
+        choices=("hts", "ovxr"),
+        default=None,
+        help=(
+            "Compatibility preset selecting one provider for both hand and wrist; "
+            "defaults to hts when the component flags are omitted"
+        ),
+    )
+    parser.add_argument(
+        "--hand-source",
+        choices=("quest", "hts", "manus"),
+        help="Articulation provider used for control (quest and hts are aliases for Quest HTS)",
+    )
+    parser.add_argument(
+        "--wrist-source",
+        choices=("quest", "hts", "manus", "vive", "vibe"),
+        help=(
+            "Anatomical-wrist provider (MANUS Remote uses Core's tracker-driven "
+            "raw-skeleton wrist; vibe aliases lighthouse vive)"
+        ),
+    )
+    parser.add_argument(
+        "--record-hand-source",
+        choices=("quest", "hts", "manus"),
+        action="append",
+        default=[],
+        help="Also acquire this articulation source at native rate; may be repeated",
+    )
+    parser.add_argument(
+        "--record-wrist-source",
+        choices=("quest", "hts", "manus", "vive", "vibe"),
+        action="append",
+        default=[],
+        help="Also acquire this wrist source at native rate; may be repeated (vibe aliases vive)",
+    )
+    parser.add_argument(
+        "--retargeter", choices=SUPPORTED_RETARGETERS, default="adaptive"
+    )
+    parser.add_argument(
+        "--hand-model", choices=("shadow", "sharpa", "wuji"), default="sharpa"
+    )
     parser.add_argument("--hand", choices=("left", "right"), default="right")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=9000)
     parser.add_argument("--protocol", choices=("udp", "tcp"), default="udp")
+    parser.add_argument(
+        "--maximum-source-skew",
+        type=float,
+        default=0.05,
+        help="Maximum articulation-to-wrist capture-time skew in seconds (default: 0.05)",
+    )
+    parser.add_argument(
+        "--articulation-wrist-calibration",
+        help=(
+            "Optional JSON rigid transform from the articulation source's local basis "
+            "to the selected anatomical-wrist basis"
+        ),
+    )
+    parser.add_argument(
+        "--manus-sdk-root",
+        default=str(Path.home() / "Desktop/emg/manus"),
+        help="MANUS install/discovery root; the bridge also searches ~/manus_setup",
+    )
+    parser.add_argument(
+        "--manus-mode",
+        choices=("integrated", "remote"),
+        default="integrated",
+        help="Integrated gloves-only fallback (default) or Remote Windows-Core client",
+    )
+    parser.add_argument(
+        "--manus-core-host",
+        help="Remote Core selector: exact discovered IP, exact name, or sorted zero-based index",
+    )
+    parser.add_argument(
+        "--manus-loopback-only",
+        action="store_true",
+        help="Restrict MANUS Remote discovery to Core on this Linux host",
+    )
+    parser.add_argument(
+        "--manus-hand-motion",
+        choices=("auto", "tracker", "tracker_rotation_only", "imu", "none"),
+        help="Raw-skeleton global motion (default: tracker in Remote, auto in Integrated)",
+    )
+    parser.add_argument(
+        "--manus-tracker-diagnostics",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable Core tracker ID/role/quality diagnostics (default: Remote only)",
+    )
+    parser.add_argument(
+        "--manus-tracker-stale-timeout",
+        type=float,
+        default=0.25,
+        help="Maximum age of the expected Ultimate update before wrist control fails",
+    )
+    parser.add_argument(
+        "--manus-expected-tracker-id",
+        help="Mandatory exact Ultimate ID for a MANUS wrist role",
+    )
+    parser.add_argument(
+        "--manus-expected-tracker-user-id",
+        type=int,
+        help="Mandatory MANUS Core user assignment for a MANUS wrist role",
+    )
+    parser.add_argument(
+        "--manus-bridge", help="Pre-built matching MANUS bridge executable"
+    )
+    parser.add_argument(
+        "--manus-calibration", help="MANUS .mcal file for the selected hand"
+    )
+    parser.add_argument(
+        "--manus-core-calibration",
+        help="Core-world to teleop-reference and anatomical-wrist calibration JSON",
+    )
+    parser.add_argument(
+        "--manus-settings-dir", help="Writable MANUS SDK settings directory"
+    )
+    parser.add_argument("--manus-log-dir", help="Writable MANUS SDK log directory")
+    parser.add_argument("--manus-startup-timeout", type=float, default=35.0)
+    parser.add_argument("--manus-connect-timeout", type=int, default=15)
+    parser.add_argument("--manus-glove-timeout", type=int, default=15)
+    parser.add_argument("--manus-reconnect-timeout", type=int, default=15)
+    parser.add_argument("--manus-discovery-wait", type=int, default=1)
+    parser.add_argument(
+        "--vive-calibration",
+        help="VIVE lighthouse/world and serial-to-anatomical-wrist calibration JSON",
+    )
     parser.add_argument("--auto-anchor", action="store_true")
     parser.add_argument(
         "--recording-path",
@@ -112,8 +295,8 @@ def _parser(catalog: AratTaskCatalog) -> argparse.ArgumentParser:
         "--record-hand-poses",
         action="store_true",
         help=(
-            "Store action-aligned pre-retargeting wrist poses and 21 hand landmarks "
-            "in the recording HDF5"
+            "Store the action-aligned 21-landmark compatibility pose plus all enabled "
+            "native-rate articulation/wrist streams and provenance in the recording HDF5"
         ),
     )
     parser.add_argument(
@@ -173,7 +356,10 @@ def _parser(catalog: AratTaskCatalog) -> argparse.ArgumentParser:
         "--emg2pose-root",
         help="emg2pose checkout (defaults to the emg2pose directory beside this repository)",
     )
-    parser.add_argument("--emg2pose-checkpoint", help="VEMG2Pose checkpoint; defaults inside --emg2pose-root")
+    parser.add_argument(
+        "--emg2pose-checkpoint",
+        help="VEMG2Pose checkpoint; defaults inside --emg2pose-root",
+    )
     parser.add_argument(
         "--emg2pose-device",
         help="Torch decoder device: auto, cpu, cuda, or cuda:N (default: auto)",
@@ -199,6 +385,31 @@ def _parser(catalog: AratTaskCatalog) -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--assisted-grasp-debug",
+        action="store_true",
+        help="Store action-aligned weld, joint-break, contact-force, penetration, and kinematic diagnostics",
+    )
+    parser.add_argument(
+        "--assisted-grasp-break-force",
+        type=_optional_positive_float,
+        default=100.0,
+        metavar="N|none",
+        help="PhysX weld break force in newtons; use 'none' to disable (default: 100)",
+    )
+    parser.add_argument(
+        "--assisted-grasp-break-torque",
+        type=_optional_positive_float,
+        default=30.0,
+        metavar="NM|none",
+        help="PhysX weld break torque in newton-metres; use 'none' to disable (default: 30)",
+    )
+    parser.add_argument(
+        "--assisted-grasp-squeeze-bias-rad",
+        type=float,
+        default=0.05,
+        help="Closing bias added to measured grasp-finger joints while welded (default: 0.05 rad)",
+    )
+    parser.add_argument(
         "--visualize-arm-markers",
         "--visualize-arm-workspace",
         dest="visualize_arm_markers",
@@ -208,7 +419,12 @@ def _parser(catalog: AratTaskCatalog) -> argparse.ArgumentParser:
             "(--visualize-arm-workspace is a deprecated alias)"
         ),
     )
-    parser.add_argument("--steps", type=int, default=0, help="Single-task step limit; 0 runs until interrupted")
+    parser.add_argument(
+        "--steps",
+        type=int,
+        default=0,
+        help="Single-task step limit; 0 runs until interrupted",
+    )
     parser.add_argument(
         "--steps-per-task",
         type=int,
@@ -220,7 +436,10 @@ def _parser(catalog: AratTaskCatalog) -> argparse.ArgumentParser:
         "--stale-frame-policy",
         choices=("error", "hold"),
         default="error",
-        help="Error on a stale HTS frame, or hold the robot until fresh tracking resumes",
+        help=(
+            "Error on a stale selected component, or hold the robot until fresh tracking resumes; "
+            "native hand/EMG recording remains strict"
+        ),
     )
     parser.add_argument("--initial-frame-timeout", type=float, default=10.0)
     parser.add_argument(
@@ -241,7 +460,9 @@ def _parser(catalog: AratTaskCatalog) -> argparse.ArgumentParser:
     )
     parser.add_argument("--wrist-flip-threshold-deg", type=float, default=90.0)
     parser.add_argument("--wrist-pair-skew-threshold-ms", type=float, default=20.0)
-    parser.add_argument("--wrist-joint-rotation-threshold-deg", type=float, default=150.0)
+    parser.add_argument(
+        "--wrist-joint-rotation-threshold-deg", type=float, default=150.0
+    )
     parser.add_argument("--wrist-joint-rotation-window-s", type=float, default=5.0)
     parser.add_argument("--wrist-joint-limit-margin-deg", type=float, default=5.0)
     parser.add_argument("--wrist-flip-post-event-seconds", type=float, default=2.0)
@@ -271,12 +492,353 @@ def _print_catalog(catalog: AratTaskCatalog) -> None:
             print(f"  {activity}: {task.label} [layout={task.layout}]")
 
 
-def _create_source(args):
-    if args.source == "hts":
-        return HTSSource(host=args.host, port=args.port, protocol=args.protocol)
+def _canonical_tracking_source(name: str) -> str:
+    if name in {"quest", "hts"}:
+        return "quest"
+    return "vive" if name == "vibe" else name
+
+
+def _effective_manus_hand_motion(args) -> str:
+    if args.manus_hand_motion is not None:
+        return args.manus_hand_motion
+    return "tracker" if args.manus_mode == "remote" else "auto"
+
+
+def _resolve_tracking_selection(args) -> TrackingSelection:
+    """Resolve legacy and component-level flags without an implicit fallback."""
+
+    if args.source is not None and (
+        args.hand_source is not None or args.wrist_source is not None
+    ):
+        raise SystemExit(
+            "--source cannot be combined with --hand-source or --wrist-source"
+        )
     if args.source == "ovxr":
-        return create_ovxr_source()
-    raise ValueError(f"Unsupported tracking source {args.source!r}")
+        if args.record_hand_source or args.record_wrist_source:
+            raise SystemExit(
+                "The unavailable --source ovxr preset cannot be combined with record-only sources"
+            )
+        return TrackingSelection("ovxr", "ovxr", (), ())
+
+    default_source = "quest"
+    hand_source = _canonical_tracking_source(args.hand_source or default_source)
+    wrist_source = _canonical_tracking_source(args.wrist_source or default_source)
+    record_hand_sources = tuple(
+        dict.fromkeys(
+            _canonical_tracking_source(name) for name in args.record_hand_source
+        )
+    )
+    record_wrist_sources = tuple(
+        dict.fromkeys(
+            _canonical_tracking_source(name) for name in args.record_wrist_source
+        )
+    )
+    return TrackingSelection(
+        hand_source=hand_source,
+        wrist_source=wrist_source,
+        record_hand_sources=record_hand_sources,
+        record_wrist_sources=record_wrist_sources,
+    )
+
+
+def _validate_manus_selection(args, selection: TrackingSelection) -> None:
+    """Reject unsafe or unused MANUS option combinations before Kit starts."""
+
+    manus_selected = (
+        "manus" in selection.articulation_sources or "manus" in selection.wrist_sources
+    )
+    manus_only_options = (
+        args.manus_bridge,
+        args.manus_calibration,
+        args.manus_core_calibration,
+        args.manus_core_host,
+        args.manus_hand_motion,
+        args.manus_expected_tracker_id,
+        args.manus_expected_tracker_user_id,
+        args.manus_settings_dir,
+        args.manus_log_dir,
+    )
+    if (
+        any(option is not None for option in manus_only_options)
+        or args.manus_mode != "integrated"
+        or args.manus_loopback_only
+        or args.manus_tracker_diagnostics is not None
+        or args.manus_tracker_stale_timeout != 0.25
+        or args.manus_connect_timeout != 15
+        or args.manus_glove_timeout != 15
+        or args.manus_reconnect_timeout != 15
+        or args.manus_discovery_wait != 1
+    ) and not manus_selected:
+        raise SystemExit(
+            "MANUS mode, bridge, host, motion, calibration, settings, log, and timeout "
+            "options require a selected or record-only MANUS source"
+        )
+    if args.manus_mode == "integrated" and (
+        args.manus_core_host is not None
+        or args.manus_core_calibration is not None
+        or args.manus_loopback_only
+    ):
+        raise SystemExit(
+            "--manus-core-host, --manus-core-calibration, and "
+            "--manus-loopback-only require --manus-mode remote"
+        )
+    manus_wrist_selected = "manus" in selection.wrist_sources
+    if manus_wrist_selected and args.manus_mode != "remote":
+        raise SystemExit(
+            "A MANUS wrist source requires --manus-mode remote; Integrated remains "
+            "the gloves-only fallback"
+        )
+    if manus_wrist_selected and args.manus_core_calibration is None:
+        raise SystemExit(
+            "A MANUS wrist source requires --manus-core-calibration so Core world "
+            "is not mistaken for the dex_teleop reference frame"
+        )
+    if manus_wrist_selected and _effective_manus_hand_motion(args) != "tracker":
+        raise SystemExit(
+            "A MANUS wrist source requires --manus-hand-motion tracker; "
+            "Auto can silently fall back away from the Ultimate"
+        )
+    if manus_wrist_selected and args.manus_tracker_diagnostics is False:
+        raise SystemExit(
+            "A MANUS wrist source requires tracker monitoring; "
+            "--no-manus-tracker-diagnostics is unsafe"
+        )
+    if manus_wrist_selected:
+        try:
+            calibration = ManusCoreCalibration.load(args.manus_core_calibration)
+            wrist_calibration = calibration.wrist(args.hand)
+        except (OSError, ValueError, KeyError) as error:
+            raise SystemExit(
+                f"Invalid MANUS wrist calibration for {args.hand}: {error}"
+            ) from error
+        if args.manus_expected_tracker_id is None:
+            raise SystemExit(
+                "A MANUS wrist source requires --manus-expected-tracker-id"
+            )
+        if args.manus_expected_tracker_user_id is None:
+            raise SystemExit(
+                "A MANUS wrist source requires --manus-expected-tracker-user-id"
+            )
+        if args.manus_expected_tracker_user_id < 0:
+            raise SystemExit("--manus-expected-tracker-user-id must be non-negative")
+        if (
+            wrist_calibration.tracker_id is not None
+            and wrist_calibration.tracker_id != args.manus_expected_tracker_id
+        ):
+            raise SystemExit(
+                "The calibration tracker_id audit metadata must match "
+                "--manus-expected-tracker-id"
+            )
+
+
+def _create_tracking_sources(args, selection: TrackingSelection) -> dict[str, object]:
+    """Construct each physical source once even when it serves several roles."""
+
+    if "ovxr" in selection.articulation_sources or "ovxr" in selection.wrist_sources:
+        # This remains an explicit unavailable-source error until a native
+        # OmniGibson/Kit adapter implements the multimodal contracts.
+        ovxr_source = create_ovxr_source()
+    else:
+        ovxr_source = None
+
+    sources: dict[str, object] = {}
+    if ovxr_source is not None:
+        sources["ovxr"] = ovxr_source
+    if "quest" in selection.articulation_sources or "quest" in selection.wrist_sources:
+        sources["quest"] = HTSSource(
+            host=args.host, port=args.port, protocol=args.protocol
+        )
+    if "manus" in selection.articulation_sources or "manus" in selection.wrist_sources:
+        calibration_arguments = {
+            f"{args.hand}_calibration": args.manus_calibration,
+        }
+        sources["manus"] = ManusIntegratedSource(
+            bridge_executable=args.manus_bridge,
+            sdk_root=args.manus_sdk_root,
+            mode=args.manus_mode,
+            core_host=args.manus_core_host,
+            loopback_only=args.manus_loopback_only,
+            hand_motion=_effective_manus_hand_motion(args),
+            tracker_diagnostics=args.manus_tracker_diagnostics,
+            startup_timeout=args.manus_startup_timeout,
+            connect_timeout=args.manus_connect_timeout,
+            glove_timeout=args.manus_glove_timeout,
+            reconnect_timeout=args.manus_reconnect_timeout,
+            discovery_wait=args.manus_discovery_wait,
+            required_handedness=args.hand,
+            settings_dir=args.manus_settings_dir,
+            log_dir=args.manus_log_dir,
+            core_calibration=args.manus_core_calibration,
+            require_tracker_for_wrist="manus" in selection.wrist_sources,
+            tracker_stale_timeout=args.manus_tracker_stale_timeout,
+            expected_tracker_id=args.manus_expected_tracker_id,
+            expected_tracker_user_id=args.manus_expected_tracker_user_id,
+            **calibration_arguments,
+        )
+    if "vive" in selection.wrist_sources:
+        if args.vive_calibration is None:
+            raise SystemExit("--wrist-source vive requires --vive-calibration")
+        sources["vive"] = ViveWristSource(args.vive_calibration)
+    return sources
+
+
+def _create_source(args):
+    """Compatibility factory retained for callers of the original HTS preset."""
+
+    selection = _resolve_tracking_selection(args)
+    if selection.hand_source != selection.wrist_source:
+        raise ValueError(
+            "Component-level tracking selection requires MultiSourceTrackingWorker"
+        )
+    return _create_tracking_sources(args, selection)[selection.hand_source]
+
+
+def _file_fingerprint(path: str | Path | None) -> dict[str, str] | None:
+    if path is None:
+        return None
+    value = Path(path).expanduser()
+    if not value.is_file():
+        return {"file": value.name, "sha256": "unavailable"}
+    return {
+        "file": value.name,
+        "sha256": hashlib.sha256(value.read_bytes()).hexdigest(),
+    }
+
+
+def _set_hand_tracking_metadata(
+    session: HandTrackingRecordingSession, worker, args
+) -> None:
+    """Attach reproducibility metadata without recording proprietary calibration contents."""
+
+    fuser = getattr(worker, "fuser", None)
+    articulation_to_wrist = getattr(fuser, "articulation_to_wrist", None)
+
+    for key, stream_id in worker.articulation_streams.items():
+        metadata: dict[str, object] = {"registry_key": key}
+        if key == "quest":
+            metadata.update(
+                {
+                    "provider": "Quest Hand Tracking Streamer",
+                    "endpoint": f"{args.protocol}://{args.host}:{args.port}",
+                }
+            )
+        elif key == "manus":
+            source = worker.sources[key]
+            try:
+                resolved_sdk_root = str(
+                    discover_manus_sdk(
+                        args.manus_sdk_root,
+                        mode=args.manus_mode,
+                    ).root
+                )
+            except SourceUnavailableError:
+                resolved_sdk_root = "unavailable"
+            bridge_path = args.manus_bridge or default_manus_bridge_path(
+                args.manus_mode
+            )
+            metadata.update(
+                {
+                    **source.recording_metadata(),
+                    "requested_sdk_root": str(Path(args.manus_sdk_root).expanduser()),
+                    "resolved_sdk_root": resolved_sdk_root,
+                    "bridge": _file_fingerprint(bridge_path),
+                    "glove_calibration": _file_fingerprint(args.manus_calibration),
+                    "core_calibration_file": _file_fingerprint(
+                        args.manus_core_calibration
+                    ),
+                }
+            )
+        session.set_stream_metadata(stream_id, metadata)
+
+    for key, stream_id in worker.wrist_streams.items():
+        metadata = {"registry_key": key}
+        if key == "quest":
+            metadata.update(
+                {
+                    "provider": "Quest Hand Tracking Streamer",
+                    "endpoint": f"{args.protocol}://{args.host}:{args.port}",
+                }
+            )
+        elif key == "vive":
+            source = worker.sources[key]
+            metadata.update(
+                {
+                    "provider": "libsurvive VIVE lighthouse",
+                    "calibration": source.calibration.as_mapping(),
+                    "calibration_file": _file_fingerprint(args.vive_calibration),
+                }
+            )
+        elif key == "manus":
+            source = worker.sources[key]
+            metadata.update(source.recording_metadata())
+            metadata.update(
+                {
+                    "glove_calibration": _file_fingerprint(args.manus_calibration),
+                    "core_calibration_file": _file_fingerprint(
+                        args.manus_core_calibration
+                    ),
+                }
+            )
+        session.set_stream_metadata(stream_id, metadata)
+    selected_articulation_source = getattr(worker, "articulation_source", None)
+    same_callback_pairing = (
+        selected_articulation_source in worker.sources
+        and worker.wrist_source in worker.sources
+        and worker.sources[selected_articulation_source]
+        is worker.sources[worker.wrist_source]
+        and callable(
+            getattr(
+                worker.sources[selected_articulation_source],
+                "drain_hand_tracking",
+                None,
+            )
+        )
+    )
+    session.set_stream_metadata(
+        worker.control_wrist_stream,
+        {
+            "provider": (
+                "same-callback identity pairing"
+                if same_callback_pairing
+                else "timestamp synchronizer"
+            ),
+            "native_stream": worker.wrist_streams[worker.wrist_source],
+            "maximum_skew_seconds": (
+                0.0 if same_callback_pairing else args.maximum_source_skew
+            ),
+            "interpolation": (
+                "none; exact source frame/time identity"
+                if same_callback_pairing
+                else "linear position and quaternion SLERP"
+            ),
+            "articulation_to_wrist": (
+                None
+                if articulation_to_wrist is None
+                else articulation_to_wrist.as_mapping()
+            ),
+            "articulation_to_wrist_file": _file_fingerprint(
+                args.articulation_wrist_calibration
+            ),
+        },
+    )
+
+    suffix = (
+        f"{args.hand_model}_{args.hand}_dexpilot.yaml"
+        if args.retargeter == "dexpilot"
+        else f"{args.hand_model}.yaml"
+    )
+    config_path = (
+        Path(__file__).resolve().parents[1] / "retargeting" / "configs" / suffix
+    )
+    session.set_stream_metadata(
+        worker.retargeting_stream,
+        {
+            "backend": args.retargeter,
+            "hand_model": args.hand_model,
+            "handedness": args.hand,
+            "configuration": _file_fingerprint(config_path),
+        },
+    )
 
 
 def build_environment_config(
@@ -289,7 +851,9 @@ def build_environment_config(
     """Build an environment from the selected version-1 saved scene."""
 
     scene_file = get_task_scene_data(task, include_task_metadata=not view_only)
-    robot_pose = None if view_only else scene_file["metadata"]["task"]["robot_poses"]["robot"][0]
+    robot_pose = (
+        None if view_only else scene_file["metadata"]["task"]["robot_poses"]["robot"][0]
+    )
     camera_rig = load_camera_rig(task.camera_rig)
     camera_layout = "view_only" if view_only else "teleop"
     # Sharing Kit's main viewport prevents VisionSensor from creating an
@@ -318,7 +882,9 @@ def build_environment_config(
             "include_robots": False,
         },
         "objects": [],
-        "robots": [] if view_only else [
+        "robots": []
+        if view_only
+        else [
             {
                 "model": ROBOT_MODEL,
                 "dataset_name": ROBOT_DATASET_NAME,
@@ -355,7 +921,9 @@ def build_environment_config(
                 },
             }
         ],
-        "task": {"type": "DummyTask"} if view_only else {
+        "task": {"type": "DummyTask"}
+        if view_only
+        else {
             "type": "BehaviorTask",
             "activity_name": task.activity,
             "activity_definition_id": 0,
@@ -375,14 +943,24 @@ def build_environment_config(
 def _validate_loaded_apparatus(env, task: AratTask) -> None:
     if task.subscale == "gross_movement":
         mannequin = env.scene.object_registry("name", "mannequin")
-        if mannequin is None or mannequin.category != "mannequin" or mannequin.model != "nphsfp":
-            raise RuntimeError("ARAT gross-movement scene did not load mannequin/nphsfp")
+        if (
+            mannequin is None
+            or mannequin.category != "mannequin"
+            or mannequin.model != "nphsfp"
+        ):
+            raise RuntimeError(
+                "ARAT gross-movement scene did not load mannequin/nphsfp"
+            )
         # The saved gross-movement layout contains only the mannequin, but the
         # normal teleoperation path adds the intended robot to the live scene.
         allowed_names = {"mannequin", *(robot.name for robot in env.robots)}
-        unexpected = set(env.scene.object_registry.get_dict("name")).difference(allowed_names)
+        unexpected = set(env.scene.object_registry.get_dict("name")).difference(
+            allowed_names
+        )
         if unexpected:
-            raise RuntimeError(f"ARAT gross-movement scene loaded unexpected objects: {sorted(unexpected)}")
+            raise RuntimeError(
+                f"ARAT gross-movement scene loaded unexpected objects: {sorted(unexpected)}"
+            )
         return
     table = env.scene.object_registry("name", "table")
     if table is None or table.category != "breakfast_table" or table.model != "nvoqyl":
@@ -398,7 +976,9 @@ def _validate_loaded_apparatus(env, task: AratTask) -> None:
 OBJECT_MAX_DEPENETRATION_VELOCITY = 3.0
 
 
-def _limit_depenetration_velocity(env, maximum: float = OBJECT_MAX_DEPENETRATION_VELOCITY) -> list[str]:
+def _limit_depenetration_velocity(
+    env, maximum: float = OBJECT_MAX_DEPENETRATION_VELOCITY
+) -> list[str]:
     """Author physxRigidBody:maxDepenetrationVelocity on every dynamic scene object."""
 
     import omnigibson as og
@@ -407,7 +987,11 @@ def _limit_depenetration_velocity(env, maximum: float = OBJECT_MAX_DEPENETRATION
     limited = []
     with og.sim.editing_usd():
         for obj in env.scene.objects:
-            if obj in env.robots or getattr(obj, "fixed_base", False) or getattr(obj, "kinematic_only", False):
+            if (
+                obj in env.robots
+                or getattr(obj, "fixed_base", False)
+                or getattr(obj, "kinematic_only", False)
+            ):
                 continue
             links = getattr(obj, "links", None) or {}
             touched = False
@@ -454,7 +1038,9 @@ def _hide_skybox_from_camera() -> None:
     with og.sim.editing_usd():
         attr = dome_prim.GetAttribute("visibleInPrimaryRay")
         if not attr:
-            attr = dome_prim.CreateAttribute("visibleInPrimaryRay", lazy.pxr.Sdf.ValueTypeNames.Bool)
+            attr = dome_prim.CreateAttribute(
+                "visibleInPrimaryRay", lazy.pxr.Sdf.ValueTypeNames.Bool
+            )
         attr.Set(False)
 
 
@@ -472,7 +1058,8 @@ def _create_and_dock_camera_viewport(
     from omnigibson.utils.ui_utils import dock_window
 
     viewports = {
-        viewport.name: viewport for viewport in lazy.omni.kit.viewport.window.get_viewport_window_instances()
+        viewport.name: viewport
+        for viewport in lazy.omni.kit.viewport.window.get_viewport_window_instances()
     }
     viewport = viewports.get(name)
     if viewport is None:
@@ -492,7 +1079,9 @@ def _create_and_dock_camera_viewport(
     return viewport
 
 
-def _set_viewport_resolution(viewport, resolution: tuple[int, int], *, fill_frame: bool) -> None:
+def _set_viewport_resolution(
+    viewport, resolution: tuple[int, int], *, fill_frame: bool
+) -> None:
     """Keep Kit's viewport widget and backing render texture on the same aspect ratio."""
 
     # ViewportAPI.set_texture_resolution() changes Hydra's backing texture but
@@ -516,7 +1105,9 @@ def _window_name(window) -> str:
     return name
 
 
-def _set_workspace_windows_visible(window_names: tuple[str, ...], visible: bool) -> None:
+def _set_workspace_windows_visible(
+    window_names: tuple[str, ...], visible: bool
+) -> None:
     """Show or hide named Kit windows and allow its dock tree to reflow."""
 
     import omnigibson as og
@@ -570,10 +1161,16 @@ def _camera_layout_panel_dock(
     layout_windows = getattr(env, "_arat_camera_windows", {})
     if parent in layout_windows:
         parent = _window_name(layout_windows[parent])
-    return parent, dock.get("position", default_position), float(dock.get("ratio", default_ratio))
+    return (
+        parent,
+        dock.get("position", default_position),
+        float(dock.get("ratio", default_ratio)),
+    )
 
 
-def _configure_camera_layout(env, camera_rig_name: str, layout_name: str, robot=None) -> None:
+def _configure_camera_layout(
+    env, camera_rig_name: str, layout_name: str, robot=None
+) -> None:
     """Apply one YAML viewport layout and register its camera-cycle keys."""
 
     import omnigibson as og
@@ -601,7 +1198,9 @@ def _configure_camera_layout(env, camera_rig_name: str, layout_name: str, robot=
         if parent["frame"] != "robot_link":
             continue
         if robot is None:
-            raise RuntimeError(f"Camera {camera_id!r} requires a robot but layout {layout_name!r} has none")
+            raise RuntimeError(
+                f"Camera {camera_id!r} requires a robot but layout {layout_name!r} has none"
+            )
         expected_parent = robot.links[parent["link"]].prim_path
         if not camera_paths[camera_id].startswith(f"{expected_parent}/"):
             raise RuntimeError(
@@ -621,7 +1220,8 @@ def _configure_camera_layout(env, camera_rig_name: str, layout_name: str, robot=
         # sensor. Reuse Kit's initially hidden main viewport directly so no
         # default-camera render product or startup view remains active.
         viewports = {
-            viewport.name: viewport for viewport in lazy.omni.kit.viewport.window.get_viewport_window_instances()
+            viewport.name: viewport
+            for viewport in lazy.omni.kit.viewport.window.get_viewport_window_instances()
         }
         main_viewport = viewports.get("Viewport")
         if main_viewport is None:
@@ -660,7 +1260,9 @@ def _configure_camera_layout(env, camera_rig_name: str, layout_name: str, robot=
             if dock_parent != "DockSpace" and dock_parent not in layout_windows:
                 continue
             dock_parent_name = (
-                "DockSpace" if dock_parent == "DockSpace" else _window_name(layout_windows[dock_parent])
+                "DockSpace"
+                if dock_parent == "DockSpace"
+                else _window_name(layout_windows[dock_parent])
             )
             if viewport_config.get("empty", False):
                 window = _create_and_dock_empty_window(
@@ -678,7 +1280,10 @@ def _configure_camera_layout(env, camera_rig_name: str, layout_name: str, robot=
                     camera_path=camera_paths[camera_id],
                     dock_position=dock_positions[dock["position"]],
                     dock_ratio=dock["ratio"],
-                    resolution=(calibration["image_width"], calibration["image_height"]),
+                    resolution=(
+                        calibration["image_width"],
+                        calibration["image_height"],
+                    ),
                     dock_parent_name=dock_parent_name,
                     fill_frame=fill_viewports,
                 )
@@ -686,7 +1291,9 @@ def _configure_camera_layout(env, camera_rig_name: str, layout_name: str, robot=
             layout_windows[viewport_id] = window
             configured.append(viewport_id)
         if not configured:
-            raise RuntimeError(f"Camera layout {layout_name!r} has cyclic viewport docking dependencies")
+            raise RuntimeError(
+                f"Camera layout {layout_name!r} has cyclic viewport docking dependencies"
+            )
         for viewport_id in configured:
             del pending_viewports[viewport_id]
 
@@ -698,7 +1305,9 @@ def _configure_camera_layout(env, camera_rig_name: str, layout_name: str, robot=
         key_name = toggle["key"].upper()
         keyboard_key = getattr(lazy.carb.input.KeyboardInput, key_name, None)
         if keyboard_key is None:
-            raise RuntimeError(f"Camera layout {layout_name!r} uses unsupported keyboard key {key_name!r}")
+            raise RuntimeError(
+                f"Camera layout {layout_name!r} uses unsupported keyboard key {key_name!r}"
+            )
         viewport = camera_viewports[toggle["viewport"]]
         cycle = tuple(toggle["cameras"])
         state = {"index": 0, "last_toggle": float("-inf")}
@@ -727,7 +1336,9 @@ def _configure_camera_layout(env, camera_rig_name: str, layout_name: str, robot=
             print(f"Camera {_viewport_id} [{_key}]: {camera_id}")
 
         KeyboardEventHandler.add_keyboard_callback(keyboard_key, cycle_camera)
-        toggle_descriptions.append(f"{key_name} cycles {toggle['viewport']} ({' / '.join(cycle)})")
+        toggle_descriptions.append(
+            f"{key_name} cycles {toggle['viewport']} ({' / '.join(cycle)})"
+        )
 
     for _ in range(3):
         og.sim.render()
@@ -762,7 +1373,9 @@ def _create_goal_status_ui(env):
     with overlay_window.frame:
         with lazy.omni.ui.ZStack():
             lazy.omni.ui.Spacer()
-            with lazy.omni.ui.VStack(alignment=lazy.omni.ui.Alignment.LEFT_TOP, spacing=0):
+            with lazy.omni.ui.VStack(
+                alignment=lazy.omni.ui.Alignment.LEFT_TOP, spacing=0
+            ):
                 lazy.omni.ui.Spacer(height=50)
                 for condition in goal_conditions:
                     with lazy.omni.ui.HStack(height=20):
@@ -803,7 +1416,9 @@ def default_recording_path(task: AratTask) -> Path:
     return DEFAULT_RECORDING_ROOT / f"{task.activity}.hdf5"
 
 
-def recording_staging_path(output_path: str | Path, *, process_id: int | None = None) -> Path:
+def recording_staging_path(
+    output_path: str | Path, *, process_id: int | None = None
+) -> Path:
     """Return a same-directory temporary path suitable for atomic publication."""
 
     output_path = Path(output_path)
@@ -818,9 +1433,13 @@ def _finalize_recording(
     evaluation_episodes: list[list[dict]] | None = None,
     hand_pose_episodes: list[list[HumanHandPoseSample]] | None = None,
     action_timing_episodes: list[list[ActionTimingSample]] | None = None,
+    assisted_grasp_episodes: list[list[dict]] | None = None,
+    assisted_grasp_config: dict | None = None,
     emg_session: EmgSession | None = None,
+    hand_tracking_session: HandTrackingRecordingSession | None = None,
+    publish: bool = True,
 ) -> None:
-    """Close and augment the HDF5 file, then atomically publish it."""
+    """Close and augment the HDF5 file, then optionally publish it atomically."""
 
     recording_env.save_data()
     if evaluation_episodes is not None:
@@ -829,19 +1448,38 @@ def _finalize_recording(
         write_hand_pose_episodes(staging_path, hand_pose_episodes)
     if action_timing_episodes is not None:
         write_action_timing_episodes(staging_path, action_timing_episodes)
+    if assisted_grasp_episodes is not None:
+        if assisted_grasp_config is None:
+            raise RuntimeError(
+                "Assisted-grasp episodes require their recorded configuration"
+            )
+        write_assisted_grasp_episodes(
+            staging_path, assisted_grasp_episodes, assisted_grasp_config
+        )
+    if hand_tracking_session is not None:
+        hand_tracking_session.close()
+        hand_tracking_session.write(staging_path)
     if emg_session is not None:
         emg_session.close()
         merge_emg_recording(staging_path, emg_session.output_path)
-    os.replace(staging_path, output_path)
+    if publish:
+        os.replace(staging_path, output_path)
     if emg_session is not None:
         emg_session.remove_staging_file()
-    print(f"Recording saved: {output_path}")
+    if publish:
+        print(f"Recording saved: {output_path}")
+    else:
+        print(f"Incomplete recording retained without publication: {staging_path}")
 
 
-def _run_viewer(task: AratTask, step_limit: int, *, shutdown: GracefulShutdown | None = None) -> None:
+def _run_viewer(
+    task: AratTask, step_limit: int, *, shutdown: GracefulShutdown | None = None
+) -> None:
     import omnigibson as og
 
-    print(f"\nLoading {task.activity}: {task.label} (scene: {get_task_scene_path(task).name})")
+    print(
+        f"\nLoading {task.activity}: {task.label} (scene: {get_task_scene_path(task).name})"
+    )
     env = og.Environment(configs=build_environment_config(task, view_only=True))
     if shutdown is not None:
         shutdown.install()
@@ -850,16 +1488,54 @@ def _run_viewer(task: AratTask, step_limit: int, *, shutdown: GracefulShutdown |
     _reset_arat_box(env)
     _hide_skybox_from_camera()
     _configure_camera_layout(env, task.camera_rig, "view_only")
-    print("Scene viewer ready; use the configured camera toggle keys or Ctrl+C to exit.")
+    print(
+        "Scene viewer ready; use the configured camera toggle keys or Ctrl+C to exit."
+    )
     steps = 0
-    while (step_limit <= 0 or steps < step_limit) and not (shutdown is not None and shutdown.requested):
+    while (step_limit <= 0 or steps < step_limit) and not (
+        shutdown is not None and shutdown.requested
+    ):
         og.sim.step()
         steps += 1
 
 
+def _source_diagnostics_for_snapshot(worker, snapshot):
+    """Return legacy raw diagnostics only when one source produced both components."""
+
+    sources = getattr(worker, "sources", None)
+    articulation_source = getattr(worker, "articulation_source", None)
+    wrist_source = getattr(worker, "wrist_source", None)
+    if sources is not None:
+        if articulation_source != wrist_source:
+            return None
+        source = sources[articulation_source]
+    else:
+        source = getattr(worker, "source", None)
+    diagnostics_for_frame = getattr(source, "diagnostics_for_frame", None)
+    return (
+        None if diagnostics_for_frame is None else diagnostics_for_frame(snapshot.frame)
+    )
+
+
+def _reset_and_wait_for_tracking(worker, timeout: float, *, context: str):
+    """Reset state and require every configured control/comparison stream.
+
+    ``MultiSourceTrackingWorker.wait_for_first`` deliberately includes
+    record-only roles in its readiness condition. Keeping this boundary in the
+    launcher prevents a task or reset episode from starting with an incomplete
+    MANUS/Quest comparison.
+    """
+
+    worker.reset()
+    try:
+        return worker.wait_for_first(timeout)
+    except SourceUnavailableError as error:
+        raise SourceUnavailableError(f"{context}: {error}") from error
+
+
 def _run_task(
     task: AratTask,
-    worker: TrackingRetargetingWorker,
+    worker: TrackingRetargetingWorker | MultiSourceTrackingWorker,
     args,
     step_limit: int,
     *,
@@ -876,7 +1552,10 @@ def _run_task(
     from omnigibson.macros import gm
     from omnigibson.utils.ui_utils import KeyboardEventHandler
 
-    from dex_teleop.omnigibson.sharpa_adapter import SharpaActionAdapter, SharpaAdapterConfig
+    from dex_teleop.omnigibson.sharpa_adapter import (
+        SharpaActionAdapter,
+        SharpaAdapterConfig,
+    )
 
     print(f"\nLoading {task.activity}: {task.label} (layout: {task.layout})")
     env = og.Environment(
@@ -888,7 +1567,11 @@ def _run_task(
     )
     if shutdown is not None:
         shutdown.install()
-    recording_path = Path(args.recording_path).expanduser() if args.recording_path else default_recording_path(task)
+    recording_path = (
+        Path(args.recording_path).expanduser()
+        if args.recording_path
+        else default_recording_path(task)
+    )
     staging_path = recording_staging_path(recording_path)
     # This is the same state/action trajectory wrapper used by JoyLo. ARAT
     # does not instantiate OmniGibson's viewer-camera sensor, so leave its
@@ -904,23 +1587,76 @@ def _run_task(
     env = recording_env
     print(f"Recording teleoperation to {recording_path} (staging: {staging_path.name})")
     evaluation_episodes = []
-    hand_pose_episodes = [] if args.record_hand_poses or emg_session is not None else None
+    assisted_grasp_episodes = [] if args.assisted_grasp_debug else None
+    assisted_grasp_config = None
+    grasp_config = None
+    if args.assisted_grasp:
+        from dex_teleop.omnigibson.assisted_grasp import AssistedGraspConfig
+
+        grasp_config = AssistedGraspConfig(
+            frozen_squeeze_bias_rad=args.assisted_grasp_squeeze_bias_rad,
+            weld_break_force=args.assisted_grasp_break_force,
+            weld_break_torque=args.assisted_grasp_break_torque,
+        )
+        if args.assisted_grasp_debug:
+            from dex_teleop.omnigibson.assisted_grasp_trace import (
+                assisted_grasp_config_dict,
+            )
+
+            assisted_grasp_config = assisted_grasp_config_dict(grasp_config)
+    hand_pose_episodes = (
+        [] if args.record_hand_poses or emg_session is not None else None
+    )
     action_timing_episodes = [] if emg_session is not None else None
+    hand_tracking_session = (
+        HandTrackingRecordingSession()
+        if args.record_hand_poses or emg_session is not None
+        else None
+    )
     if hand_pose_episodes is not None:
         print("Recording action-aligned human hand poses under human_hand_pose/demo_N")
     if action_timing_episodes is not None:
-        print("Recording action and simulator clock boundaries under action_timing/demo_N")
+        print(
+            "Recording action and simulator clock boundaries under action_timing/demo_N"
+        )
     wrist_recorder = None
     emg_monitor = None
     arm_marker_visualizer = None
+    grasp_trace_collector = None
+    primary_error: BaseException | None = None
 
     try:
+        if hand_tracking_session is not None:
+            if not isinstance(worker, MultiSourceTrackingWorker):
+                raise RuntimeError(
+                    "Native-rate hand tracking requires MultiSourceTrackingWorker"
+                )
+            _set_hand_tracking_metadata(hand_tracking_session, worker, args)
+            worker.set_recording_session(hand_tracking_session)
+            print(
+                "Recording native-rate component streams and action provenance under hand_tracking"
+            )
+        if hand_tracking_session is not None or args.auto_anchor:
+            _reset_and_wait_for_tracking(
+                worker,
+                args.initial_frame_timeout,
+                context=f"Tracking was not ready before starting {task.activity}",
+            )
+        else:
+            # Preserve the original non-auto-anchor workflow: the scene may be
+            # loaded before Quest starts streaming, but no stale state carries
+            # over from a previous task.
+            worker.reset()
         env.reset()
         evaluation_episodes.append([])
+        if assisted_grasp_episodes is not None:
+            assisted_grasp_episodes.append([])
         if hand_pose_episodes is not None:
             hand_pose_episodes.append([])
         if action_timing_episodes is not None:
             action_timing_episodes.append([])
+        if hand_tracking_session is not None:
+            hand_tracking_session.begin_episode()
         _validate_loaded_apparatus(env, task)
         _reset_arat_box(env)
         _hide_skybox_from_camera()
@@ -945,9 +1681,13 @@ def _run_task(
         if args.tracking_yaw_deg:
             print(f"Tracking frame yaw: {args.tracking_yaw_deg:g} degrees")
         if not gm.HEADLESS:
-            from dex_teleop.omnigibson.workspace_visualization import ArmPoseMarkerVisualizer
+            from dex_teleop.omnigibson.workspace_visualization import (
+                ArmPoseMarkerVisualizer,
+            )
 
-            marker_draw = lazy.isaacsim.util.debug_draw._debug_draw.acquire_debug_draw_interface()
+            marker_draw = (
+                lazy.isaacsim.util.debug_draw._debug_draw.acquire_debug_draw_interface()
+            )
             arm_marker_visualizer = ArmPoseMarkerVisualizer(
                 marker_draw,
                 target_visible=args.visualize_arm_markers,
@@ -960,7 +1700,10 @@ def _run_task(
                 "Press T to toggle the target marker and E to toggle the EEF marker."
             )
         if args.wrist_flip_output is not None:
-            from dex_teleop.diagnostics import WristFlipDiagnosticConfig, WristFlipRecorder
+            from dex_teleop.diagnostics import (
+                WristFlipDiagnosticConfig,
+                WristFlipRecorder,
+            )
 
             wrist_recorder = WristFlipRecorder(
                 args.wrist_flip_output,
@@ -978,8 +1721,12 @@ def _run_task(
             print(f"Wrist-flip diagnostics: {wrist_recorder.output_dir}")
             diagnostic_arm_indices = robot.arm_control_idx[adapter.arm_name]
             joint_lower_limits, joint_upper_limits = robot.joint_position_limits
-            diagnostic_arm_lower_limits = joint_lower_limits[diagnostic_arm_indices].cpu().numpy().copy()
-            diagnostic_arm_upper_limits = joint_upper_limits[diagnostic_arm_indices].cpu().numpy().copy()
+            diagnostic_arm_lower_limits = (
+                joint_lower_limits[diagnostic_arm_indices].cpu().numpy().copy()
+            )
+            diagnostic_arm_upper_limits = (
+                joint_upper_limits[diagnostic_arm_indices].cpu().numpy().copy()
+            )
         else:
             diagnostic_arm_indices = None
             diagnostic_arm_lower_limits = None
@@ -993,6 +1740,7 @@ def _run_task(
                 robot,
                 HandSemantics.sharpa(args.hand),
                 dt=1.0 / 30.0,  # the env's action period (action_frequency 30 Hz)
+                config=grasp_config,
                 announce=print,
             )
             print(
@@ -1004,6 +1752,17 @@ def _run_task(
                 f"Capped depenetration velocity at {OBJECT_MAX_DEPENETRATION_VELOCITY} m/s for: "
                 f"{', '.join(limited) if limited else 'no dynamic objects'}"
             )
+            if args.assisted_grasp_debug:
+                from dex_teleop.omnigibson.assisted_grasp_trace import (
+                    AssistedGraspTraceCollector,
+                )
+
+                grasp_trace_collector = AssistedGraspTraceCollector(
+                    robot, grasp_supervisor
+                )
+                print(
+                    "Recording assisted-grasp diagnostics under assisted_grasp/demo_N"
+                )
         evaluator = None
         if enable_score:
             from dex_teleop.arat.eval.live import LiveAratEvaluator
@@ -1024,21 +1783,27 @@ def _run_task(
                 _set_workspace_windows_visible(("Content", "Console"), True)
                 og.sim.render()
             default_emg_parent = (
-                "DockSpace" if gm.HEADLESS else _window_name(env._arat_camera_viewports["main"])
+                "DockSpace"
+                if gm.HEADLESS
+                else _window_name(env._arat_camera_viewports["main"])
             )
-            emg_dock_parent, emg_dock_position, emg_dock_ratio = _camera_layout_panel_dock(
-                env,
-                "emg",
-                default_parent=default_emg_parent,
-                default_position="right",
-                default_ratio=0.5,
+            emg_dock_parent, emg_dock_position, emg_dock_ratio = (
+                _camera_layout_panel_dock(
+                    env,
+                    "emg",
+                    default_parent=default_emg_parent,
+                    default_position="right",
+                    default_ratio=0.5,
+                )
             )
-            decoder_dock_parent, decoder_dock_position, decoder_dock_ratio = _camera_layout_panel_dock(
-                env,
-                "decoder",
-                default_parent="OYMotion EMG",
-                default_position="bottom",
-                default_ratio=0.5,
+            decoder_dock_parent, decoder_dock_position, decoder_dock_ratio = (
+                _camera_layout_panel_dock(
+                    env,
+                    "decoder",
+                    default_parent="OYMotion EMG",
+                    default_position="bottom",
+                    default_ratio=0.5,
+                )
             )
             emg_monitor = create_emg_monitor(
                 emg_session,
@@ -1060,7 +1825,9 @@ def _run_task(
         goal_conditions = env.task.activity_natural_language_goal_conditions
         # Keep the Kit UI object alive for the full environment lifetime.
         env._arat_goal_status_window = goal_status_window
-        reset_positions = th.tensor(reset_joint_positions(args.reset_pose), dtype=th.float32)
+        reset_positions = th.tensor(
+            reset_joint_positions(args.reset_pose), dtype=th.float32
+        )
         control = {
             "engaged": bool(args.auto_anchor),
             "anchor_after": time.monotonic() if args.auto_anchor else None,
@@ -1070,6 +1837,11 @@ def _run_task(
         }
 
         def start_or_anchor():
+            _reset_and_wait_for_tracking(
+                worker,
+                args.initial_frame_timeout,
+                context="Tracking was not ready for engagement",
+            )
             adapter.request_anchor()
             if arm_marker_visualizer is not None:
                 arm_marker_visualizer.reset()
@@ -1083,12 +1855,24 @@ def _run_task(
             nonlocal previous_goal_status
             control["engaged"] = False
             control["anchor_after"] = None
+            # Establish the new source boundary before flushing the current OG
+            # trajectory. If a selected or comparison stream is missing, the
+            # existing episode remains action-aligned and can still finalize.
+            _reset_and_wait_for_tracking(
+                worker,
+                args.initial_frame_timeout,
+                context="Tracking was not ready for reset",
+            )
             env.reset()
             evaluation_episodes.append([])
+            if assisted_grasp_episodes is not None:
+                assisted_grasp_episodes.append([])
             if hand_pose_episodes is not None:
                 hand_pose_episodes.append([])
             if action_timing_episodes is not None:
                 action_timing_episodes.append([])
+            if hand_tracking_session is not None:
+                hand_tracking_session.begin_episode()
             robot.set_joint_positions(reset_positions)
             robot.keep_still()
             _show_robot_end_effectors(robot)
@@ -1128,20 +1912,36 @@ def _run_task(
                 print("Wrist flip marked; the next simulator step will be tagged")
 
         if not gm.HEADLESS:
-            KeyboardEventHandler.add_keyboard_callback(lazy.carb.input.KeyboardInput.SPACE, request_start_or_anchor)
-            KeyboardEventHandler.add_keyboard_callback(lazy.carb.input.KeyboardInput.R, request_reset)
+            KeyboardEventHandler.add_keyboard_callback(
+                lazy.carb.input.KeyboardInput.SPACE, request_start_or_anchor
+            )
+            KeyboardEventHandler.add_keyboard_callback(
+                lazy.carb.input.KeyboardInput.R, request_reset
+            )
             if arm_marker_visualizer is not None:
                 KeyboardEventHandler.add_keyboard_callback(
-                    lazy.carb.input.KeyboardInput.T, lambda: request_marker_toggle("target")
+                    lazy.carb.input.KeyboardInput.T,
+                    lambda: request_marker_toggle("target"),
                 )
                 KeyboardEventHandler.add_keyboard_callback(
-                    lazy.carb.input.KeyboardInput.E, lambda: request_marker_toggle("eef")
+                    lazy.carb.input.KeyboardInput.E,
+                    lambda: request_marker_toggle("eef"),
                 )
             if wrist_recorder is not None:
-                KeyboardEventHandler.add_keyboard_callback(lazy.carb.input.KeyboardInput.F, mark_wrist_flip)
-        diagnostic_key = "; press F when a flip is visible" if wrist_recorder is not None else ""
-        marker_keys = "; press T/E to toggle target/EEF frames" if arm_marker_visualizer is not None else ""
-        print(f"Press SPACE to start or re-anchor; press R to reset{marker_keys}{diagnostic_key}; Ctrl+C exits.")
+                KeyboardEventHandler.add_keyboard_callback(
+                    lazy.carb.input.KeyboardInput.F, mark_wrist_flip
+                )
+        diagnostic_key = (
+            "; press F when a flip is visible" if wrist_recorder is not None else ""
+        )
+        marker_keys = (
+            "; press T/E to toggle target/EEF frames"
+            if arm_marker_visualizer is not None
+            else ""
+        )
+        print(
+            f"Press SPACE to start or re-anchor; press R to reset{marker_keys}{diagnostic_key}; Ctrl+C exits."
+        )
         if args.auto_anchor:
             print("Auto-anchor enabled; the first fresh frame anchors the wrist.")
 
@@ -1150,7 +1950,9 @@ def _run_task(
         previous_goal_status = None
         holding_stale_frame = False
         stale_hold_started = None
-        while (step_limit <= 0 or steps < step_limit) and not (shutdown is not None and shutdown.requested):
+        while (step_limit <= 0 or steps < step_limit) and not (
+            shutdown is not None and shutdown.requested
+        ):
             pending_command = control["pending_command"]
             control["pending_command"] = None
             if pending_command == "reset":
@@ -1167,22 +1969,34 @@ def _run_task(
                     print(f"Measured EEF frame {'shown' if visible else 'hidden'}")
                 pending_marker_toggles.clear()
             worker.check_health()
+            if hand_tracking_session is not None:
+                # Native-rate comparison recordings are intentionally
+                # loss-detecting: a record-only provider that stops updating
+                # invalidates the run instead of silently truncating its stream.
+                worker.check_stream_freshness(args.maximum_frame_age)
             if emg_session is not None:
                 emg_session.check_health()
             if not control["engaged"]:
                 robot.set_joint_positions(reset_positions)
                 robot.keep_still()
                 og.sim.step()
-                if arm_marker_visualizer is not None and arm_marker_visualizer.update_due():
+                if (
+                    arm_marker_visualizer is not None
+                    and arm_marker_visualizer.update_due()
+                ):
                     from omnigibson.utils import transform_utils as T
 
                     base_position, base_quaternion = robot.get_position_orientation()
-                    eef_position, eef_quaternion = robot.eef_links[adapter.arm_name].get_position_orientation()
-                    eef_relative_position, eef_relative_quaternion = T.relative_pose_transform(
-                        eef_position,
-                        eef_quaternion,
-                        base_position,
-                        base_quaternion,
+                    eef_position, eef_quaternion = robot.eef_links[
+                        adapter.arm_name
+                    ].get_position_orientation()
+                    eef_relative_position, eef_relative_quaternion = (
+                        T.relative_pose_transform(
+                            eef_position,
+                            eef_quaternion,
+                            base_position,
+                            base_quaternion,
+                        )
                     )
                     # While disengaged, holding the measured pose is the effective arm command.
                     arm_marker_visualizer.update(
@@ -1200,20 +2014,31 @@ def _run_task(
             snapshot = worker.snapshot()
             anchor_after = control["anchor_after"]
             if snapshot is not None:
-                frame_age = time.monotonic() - snapshot.frame.receipt_timestamp
+                receipt_times = [snapshot.frame.receipt_timestamp]
+                if snapshot.observation is not None:
+                    receipt_times = [
+                        snapshot.observation.articulation.receipt_timestamp,
+                        snapshot.observation.wrist.receipt_timestamp,
+                    ]
+                frame_age = max(
+                    time.monotonic() - receipt_time for receipt_time in receipt_times
+                )
                 if frame_age > args.maximum_frame_age:
                     if args.stale_frame_policy == "error":
                         # Preserve the worker's standard typed stale-frame exception and message.
                         worker.snapshot(maximum_age=args.maximum_frame_age)
                     if not holding_stale_frame:
                         LOGGER.warning(
-                            "HTS frame is stale (%.3fs > %.3fs); holding the robot until tracking resumes",
+                            "Selected hand observation is stale (%.3fs > %.3fs); holding until tracking resumes",
                             frame_age,
                             args.maximum_frame_age,
                         )
                         holding_stale_frame = True
                         stale_hold_started = time.monotonic()
-                    if anchor_after is not None and time.monotonic() - anchor_after > args.initial_frame_timeout:
+                    if (
+                        anchor_after is not None
+                        and time.monotonic() - anchor_after > args.initial_frame_timeout
+                    ):
                         raise RuntimeError(
                             f"No fresh {args.hand}-hand frame arrived within "
                             f"{args.initial_frame_timeout:.1f}s after anchoring"
@@ -1226,11 +2051,19 @@ def _run_task(
                     continue
                 if holding_stale_frame:
                     assert stale_hold_started is not None
-                    print(f"Fresh HTS tracking resumed after holding for {time.monotonic() - stale_hold_started:.3f}s")
+                    print(
+                        f"Fresh tracking resumed after holding for {time.monotonic() - stale_hold_started:.3f}s"
+                    )
                     holding_stale_frame = False
                     stale_hold_started = None
-            if snapshot is None or (anchor_after is not None and snapshot.frame.receipt_timestamp <= anchor_after):
-                if anchor_after is not None and time.monotonic() - anchor_after > args.initial_frame_timeout:
+            if snapshot is None or (
+                anchor_after is not None
+                and snapshot.frame.receipt_timestamp <= anchor_after
+            ):
+                if (
+                    anchor_after is not None
+                    and time.monotonic() - anchor_after > args.initial_frame_timeout
+                ):
                     raise RuntimeError(
                         f"No fresh {args.hand}-hand frame arrived within {args.initial_frame_timeout:.1f}s after anchoring"
                     )
@@ -1241,12 +2074,14 @@ def _run_task(
                 steps += 1
                 continue
             control["anchor_after"] = None
-            frozen_fingers = grasp_supervisor.frozen_fingers if grasp_supervisor is not None else None
+            frozen_fingers = (
+                grasp_supervisor.frozen_fingers
+                if grasp_supervisor is not None
+                else None
+            )
             source_diagnostics = None
             if wrist_recorder is not None or hand_pose_episodes is not None:
-                diagnostics_for_frame = getattr(worker.source, "diagnostics_for_frame", None)
-                if diagnostics_for_frame is not None:
-                    source_diagnostics = diagnostics_for_frame(snapshot.frame)
+                source_diagnostics = _source_diagnostics_for_snapshot(worker, snapshot)
             action = adapter.action(snapshot, frozen_fingers=frozen_fingers)
             action_diagnostics = None
             if wrist_recorder is not None or arm_marker_visualizer is not None:
@@ -1254,12 +2089,24 @@ def _run_task(
                 # while stepping and a re-anchor intentionally clears adapter state.
                 action_diagnostics = adapter.last_wrist_diagnostics
                 if action_diagnostics is None:
-                    raise RuntimeError("Sharpa adapter did not expose wrist diagnostics after building an action")
+                    raise RuntimeError(
+                        "Sharpa adapter did not expose wrist diagnostics after building an action"
+                    )
             sim_time_before_s = float(og.sim.current_time)
             action_apply_monotonic_ns = time.monotonic_ns()
             _, _, terminated, truncated, info = env.step(action)
             step_return_monotonic_ns = time.monotonic_ns()
             sim_time_after_s = float(og.sim.current_time)
+            grasp_trace_step = None
+            if grasp_trace_collector is not None:
+                grasp_trace_step = grasp_trace_collector.capture_before_supervisor(
+                    episode_step=len(assisted_grasp_episodes[-1]),
+                    sim_time_before_s=sim_time_before_s,
+                    sim_time_after_s=sim_time_after_s,
+                    live_fingers=adapter.last_live_fingers,
+                    measured_fingers=adapter.measured_fingers,
+                    frozen_fingers=frozen_fingers,
+                )
             if action_timing_episodes is not None:
                 action_timing_episodes[-1].append(
                     ActionTimingSample(
@@ -1270,17 +2117,32 @@ def _run_task(
                     )
                 )
             if hand_pose_episodes is not None:
-                hand_pose_episodes[-1].append(HumanHandPoseSample.capture(snapshot.frame, source_diagnostics))
-            marker_update_due = arm_marker_visualizer is not None and arm_marker_visualizer.update_due()
+                hand_pose_episodes[-1].append(
+                    HumanHandPoseSample.capture(snapshot.frame, source_diagnostics)
+                )
+            if hand_tracking_session is not None:
+                selection = snapshot.action_selection()
+                if selection is None:
+                    raise RuntimeError(
+                        "Multi-source snapshot is missing hand-tracking recording provenance"
+                    )
+                hand_tracking_session.append_action_selection(selection)
+            marker_update_due = (
+                arm_marker_visualizer is not None and arm_marker_visualizer.update_due()
+            )
             if wrist_recorder is not None or marker_update_due:
                 from omnigibson.utils import transform_utils as T
 
                 base_position, base_quaternion = robot.get_position_orientation()
-                eef_position, eef_quaternion = robot.eef_links[adapter.arm_name].get_position_orientation()
+                eef_position, eef_quaternion = robot.eef_links[
+                    adapter.arm_name
+                ].get_position_orientation()
             if wrist_recorder is not None:
                 arm_joint_positions = robot.get_joint_positions()
-                eef_relative_position, eef_relative_quaternion = T.relative_pose_transform(
-                    eef_position, eef_quaternion, base_position, base_quaternion
+                eef_relative_position, eef_relative_quaternion = (
+                    T.relative_pose_transform(
+                        eef_position, eef_quaternion, base_position, base_quaternion
+                    )
                 )
                 wrist_recorder.observe(
                     step=steps,
@@ -1289,13 +2151,17 @@ def _run_task(
                     action_diagnostics=action_diagnostics,
                     eef_position_after=eef_relative_position.cpu().numpy(),
                     eef_quaternion_after_xyzw=eef_relative_quaternion.cpu().numpy(),
-                    arm_joint_positions=arm_joint_positions[diagnostic_arm_indices].cpu().numpy(),
+                    arm_joint_positions=arm_joint_positions[diagnostic_arm_indices]
+                    .cpu()
+                    .numpy(),
                     arm_joint_lower_limits=diagnostic_arm_lower_limits,
                     arm_joint_upper_limits=diagnostic_arm_upper_limits,
                 )
             if marker_update_due:
                 filtered_quaternion = T.axisangle2quat(
-                    th.as_tensor(action_diagnostics.filtered_axis_angle, dtype=th.float32)
+                    th.as_tensor(
+                        action_diagnostics.filtered_axis_angle, dtype=th.float32
+                    )
                 )
                 arm_marker_visualizer.update(
                     target_position_robot=action_diagnostics.filtered_position,
@@ -1306,7 +2172,13 @@ def _run_task(
                     base_quaternion_world_xyzw=base_quaternion.cpu().numpy(),
                 )
             if grasp_supervisor is not None:
-                grasp_supervisor.step(adapter.last_live_fingers, adapter.measured_fingers)
+                grasp_supervisor.step(
+                    adapter.last_live_fingers, adapter.measured_fingers
+                )
+            if grasp_trace_step is not None:
+                assisted_grasp_episodes[-1].append(
+                    grasp_trace_collector.finish_after_supervisor(grasp_trace_step)
+                )
             goal_status = info["done"]["goal_status"]
             _update_goal_status_labels(goal_status_labels, goal_status)
             if goal_status != previous_goal_status:
@@ -1325,7 +2197,9 @@ def _run_task(
                 if arat_snapshot is not None:
                     arat_trace = evaluator.evaluation_trace(arat_snapshot)
                 new_events = evaluator.consume_new_events()
-            evaluation_episodes[-1].append(build_step_evaluation(goal_conditions, goal_status, arat_trace))
+            evaluation_episodes[-1].append(
+                build_step_evaluation(goal_conditions, goal_status, arat_trace)
+            )
             if emg_monitor is not None:
                 emg_monitor.update()
             for event in new_events:
@@ -1339,7 +2213,9 @@ def _run_task(
                     )
                 else:
                     # The scorer confirms completion (release + settle) before the item ends
-                    print(f"BDDL goal for {task.activity} satisfied; awaiting scorer confirmation")
+                    print(
+                        f"BDDL goal for {task.activity} satisfied; awaiting scorer confirmation"
+                    )
                 logged_goal_termination = True
             if truncated:
                 raise RuntimeError(f"{task.activity} reached its BehaviorTask timeout")
@@ -1362,35 +2238,121 @@ def _run_task(
             result_path = write_item_result(result, results_dir)
             print(f"Wrote {result_path}")
         return result
+    except BaseException as error:
+        primary_error = error
+        raise
     finally:
-        try:
-            if emg_monitor is not None:
-                emg_monitor.close()
-            if arm_marker_visualizer is not None:
-                arm_marker_visualizer.close()
-            if wrist_recorder is not None:
-                wrist_recorder.close()
-                print(f"Wrote wrist-flip report to {wrist_recorder.summary_path}")
-        finally:
-            _finalize_recording(
-                recording_env,
-                staging_path,
-                recording_path,
-                evaluation_episodes,
-                hand_pose_episodes,
-                action_timing_episodes,
-                emg_session,
+        cleanup_errors: list[tuple[str, BaseException]] = []
+        for label, resource in (
+            ("EMG monitor", emg_monitor),
+            ("arm-marker visualizer", arm_marker_visualizer),
+            ("wrist-flip recorder", wrist_recorder),
+            ("assisted-grasp trace collector", grasp_trace_collector),
+        ):
+            if resource is None:
+                continue
+            try:
+                resource.close()
+                if label == "wrist-flip recorder":
+                    print(f"Wrote wrist-flip report to {wrist_recorder.summary_path}")
+            except BaseException as error:
+                cleanup_errors.append((label, error))
+
+        recorder_error: BaseException | None = None
+        recorder_detached = True
+        if hand_tracking_session is not None:
+            try:
+                worker.set_recording_session(None, timeout=10.0)
+                hand_tracking_session.close()
+            except BaseException as error:
+                recorder_detached = False
+                recorder_error = error
+
+        finalization_error: BaseException | None = None
+        if recorder_detached:
+            try:
+                _finalize_recording(
+                    recording_env=recording_env,
+                    staging_path=staging_path,
+                    output_path=recording_path,
+                    evaluation_episodes=evaluation_episodes,
+                    hand_pose_episodes=hand_pose_episodes,
+                    action_timing_episodes=action_timing_episodes,
+                    assisted_grasp_episodes=assisted_grasp_episodes,
+                    assisted_grasp_config=assisted_grasp_config,
+                    emg_session=emg_session,
+                    hand_tracking_session=hand_tracking_session,
+                    # A failure before the first environment reset has no OG
+                    # trajectory. Retain that diagnostic staging file without
+                    # replacing a prior valid recording at the destination.
+                    publish=primary_error is None or bool(evaluation_episodes),
+                )
+            except BaseException as error:
+                finalization_error = error
+        else:
+            # The native collector may still be mutating, so do not publish or
+            # augment the file. Close OmniGibson's base HDF5 handle and retain
+            # the staging file for diagnosis instead of leaking an open file.
+            try:
+                recording_env.save_data()
+            except BaseException as error:
+                finalization_error = error
+
+        secondary_messages = [
+            f"Could not close {label}: {error}" for label, error in cleanup_errors
+        ]
+        if recorder_error is not None:
+            secondary_messages.append(
+                f"Could not quiesce the hand-tracking recorder: {recorder_error}"
             )
+        if finalization_error is not None:
+            secondary_messages.append(
+                f"Recording finalization also failed: {finalization_error}"
+            )
+
+        if primary_error is not None:
+            for message in secondary_messages:
+                primary_error.add_note(message)
+                LOGGER.error(message)
+        elif recorder_error is not None:
+            failure = RuntimeError(
+                f"Could not quiesce the hand-tracking recorder: {recorder_error}"
+            )
+            for message in secondary_messages:
+                if message != str(failure):
+                    failure.add_note(message)
+            raise failure from recorder_error
+        elif finalization_error is not None:
+            for message in secondary_messages:
+                if not message.startswith("Recording finalization also failed:"):
+                    finalization_error.add_note(message)
+            raise finalization_error
+        elif cleanup_errors:
+            failure = RuntimeError("Task resources failed to close cleanly")
+            for message in secondary_messages:
+                failure.add_note(message)
+            raise failure from cleanup_errors[0][1]
 
 
 def main(argv: list[str] | None = None) -> None:
     catalog = AratTaskCatalog()
     args = _parser(catalog).parse_args(argv)
+    tracking_selection = _resolve_tracking_selection(args)
     if args.display == "decoder":
         args.visualize_decoder = True
     if args.list_tasks:
         _print_catalog(catalog)
         return
+    articulation_frame_transform = None
+    if not args.view_only and args.articulation_wrist_calibration is not None:
+        try:
+            articulation_frame_transform = ArticulationFrameTransform.load(
+                args.articulation_wrist_calibration
+            )
+        except (OSError, ValueError) as error:
+            raise SystemExit(
+                f"Invalid --articulation-wrist-calibration: {error}"
+            ) from error
     if args.task is None and args.subscale is None:
         raise SystemExit("Specify --task or --subscale (or use --list-tasks)")
     if not args.view_only and args.hand_model != "sharpa":
@@ -1398,36 +2360,72 @@ def main(argv: list[str] | None = None) -> None:
             f"Landmark retargeting supports {args.hand_model}, but initial OmniGibson execution supports only Sharpa"
         )
     if not args.view_only and args.hand != "right":
-        raise SystemExit("Initial OmniGibson execution supports only the right-hand Sharpa robot")
+        raise SystemExit(
+            "Initial OmniGibson execution supports only the right-hand Sharpa robot"
+        )
     if (
         args.steps < 0
         or args.steps_per_task <= 0
+        or not math.isfinite(args.maximum_frame_age)
         or args.maximum_frame_age <= 0
+        or not math.isfinite(args.initial_frame_timeout)
         or args.initial_frame_timeout <= 0
+        or not math.isfinite(args.maximum_source_skew)
+        or args.maximum_source_skew < 0
+        or not math.isfinite(args.manus_startup_timeout)
+        or args.manus_startup_timeout <= 0
+        or args.manus_connect_timeout < 0
+        or args.manus_glove_timeout < 0
+        or args.manus_reconnect_timeout < 0
+        or args.manus_discovery_wait <= 0
+        or not math.isfinite(args.manus_tracker_stale_timeout)
+        or args.manus_tracker_stale_timeout <= 0
         or not math.isfinite(args.tracking_yaw_deg)
         or not math.isfinite(args.position_sensitivity)
         or args.position_sensitivity <= 0
+        or not math.isfinite(args.assisted_grasp_squeeze_bias_rad)
+        or args.assisted_grasp_squeeze_bias_rad < 0
     ):
         raise SystemExit(
-            "Step limits, frame timeouts, tracking yaw, or position sensitivity are invalid "
-            "(single-task --steps may be 0)"
+            "Step limits, source/frame timeouts, MANUS timeouts, tracking skew/yaw, position sensitivity, or assisted-grasp "
+            "squeeze bias are invalid (single-task --steps and squeeze bias may be 0)"
         )
 
     tasks = catalog.resolve(args.task, args.subscale)
     if args.camera_rig is not None:
         tasks = tuple(replace(task, camera_rig=args.camera_rig) for task in tasks)
     if args.assisted_grasp and args.view_only:
-        raise SystemExit("--assisted-grasp is only supported during teleoperation, not with --view-only")
+        raise SystemExit(
+            "--assisted-grasp is only supported during teleoperation, not with --view-only"
+        )
+    if args.assisted_grasp_debug and not args.assisted_grasp:
+        raise SystemExit("--assisted-grasp-debug requires --assisted-grasp")
     if args.visualize_arm_markers and args.view_only:
-        raise SystemExit("--visualize-arm-markers is only supported during teleoperation, not with --view-only")
+        raise SystemExit(
+            "--visualize-arm-markers is only supported during teleoperation, not with --view-only"
+        )
     if args.recording_path is not None and args.view_only:
-        raise SystemExit("--recording-path is only supported during teleoperation, not with --view-only")
+        raise SystemExit(
+            "--recording-path is only supported during teleoperation, not with --view-only"
+        )
     if args.record_hand_poses and args.view_only:
-        raise SystemExit("--record-hand-poses is only supported during teleoperation, not with --view-only")
+        raise SystemExit(
+            "--record-hand-poses is only supported during teleoperation, not with --view-only"
+        )
+    if (args.record_hand_source or args.record_wrist_source) and not (
+        args.record_hand_poses or args.emg
+    ):
+        raise SystemExit(
+            "Record-only tracking sources require --record-hand-poses or --emg"
+        )
     if args.emg and args.view_only:
-        raise SystemExit("--emg is only supported during teleoperation, not with --view-only")
+        raise SystemExit(
+            "--emg is only supported during teleoperation, not with --view-only"
+        )
     if args.emg and len(tasks) != 1:
-        raise SystemExit("--emg requires a single --task so one wristband stream maps to one recording")
+        raise SystemExit(
+            "--emg requires a single --task so one wristband stream maps to one recording"
+        )
     if not args.emg and (
         args.emg_device is not None
         or args.emg_sdk_path is not None
@@ -1441,7 +2439,9 @@ def main(argv: list[str] | None = None) -> None:
     ):
         raise SystemExit("EMG device, SDK, display, and decoder options require --emg")
     if args.visualize_decoder and args.no_emg_display:
-        raise SystemExit("--visualize-decoder requires the EMG display; remove --no-emg-display")
+        raise SystemExit(
+            "--visualize-decoder requires the EMG display; remove --no-emg-display"
+        )
     if not args.visualize_decoder and (
         args.emg2pose_root is not None
         or args.emg2pose_checkpoint is not None
@@ -1454,11 +2454,26 @@ def main(argv: list[str] | None = None) -> None:
     if args.emg_scan_ms <= 0 or args.emg_connect_timeout <= 0:
         raise SystemExit("EMG scan and connection timeouts must be positive")
     if args.recording_path is not None and len(tasks) != 1:
-        raise SystemExit("--recording-path requires a single --task; record subscale activities to separate files")
+        raise SystemExit(
+            "--recording-path requires a single --task; record subscale activities to separate files"
+        )
     if args.wrist_flip_output is not None and len(tasks) != 1:
         raise SystemExit("--wrist-flip-output requires a single --task")
-    if args.wrist_flip_output is not None and args.source != "hts":
-        raise SystemExit("Raw wrist-flip diagnostics currently require --source hts")
+    if args.wrist_flip_output is not None and (
+        tracking_selection.hand_source != "quest"
+        or tracking_selection.wrist_source != "quest"
+    ):
+        raise SystemExit(
+            "Raw wrist-flip diagnostics currently require Quest/HTS for both hand and wrist"
+        )
+    if (
+        args.vive_calibration is not None
+        and "vive" not in tracking_selection.wrist_sources
+    ):
+        raise SystemExit(
+            "--vive-calibration requires a selected or record-only VIVE wrist source"
+        )
+    _validate_manus_selection(args, tracking_selection)
     if (
         not 0.0 < args.wrist_flip_threshold_deg <= 180.0
         or args.wrist_pair_skew_threshold_ms < 0.0
@@ -1467,7 +2482,10 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit("Wrist diagnostic thresholds are outside their valid ranges")
     data_root = Path(__file__).resolve().parents[4] / "datasets"
     configured_data_root = os.environ.get("OMNIGIBSON_DATA_PATH")
-    if configured_data_root is not None and Path(configured_data_root).expanduser().resolve() != data_root.resolve():
+    if (
+        configured_data_root is not None
+        and Path(configured_data_root).expanduser().resolve() != data_root.resolve()
+    ):
         raise SystemExit(
             "OMNIGIBSON_DATA_PATH points outside Behavior-1K-arat; unset it or set it to "
             f"{data_root}"
@@ -1496,23 +2514,32 @@ def main(argv: list[str] | None = None) -> None:
     gm.RENDER_VIEWER_CAMERA = args.view_only
     logging.basicConfig(level=logging.INFO)
 
-    enable_score = not args.no_score and not args.view_only and not catalog.placeholder_goals
+    enable_score = (
+        not args.no_score and not args.view_only and not catalog.placeholder_goals
+    )
     if not args.view_only and not args.no_score and catalog.placeholder_goals:
-        LOGGER.warning("ARAT scoring disabled: the task catalog still declares placeholder goals")
+        LOGGER.warning(
+            "ARAT scoring disabled: the task catalog still declares placeholder goals"
+        )
     results_dir = make_results_dir(Path(args.results_dir)) if enable_score else None
     if results_dir is not None:
         print(f"ARAT results directory: {results_dir}")
     session = None
     if enable_score and args.subscale is not None:
-        session = AratSessionScorer({args.subscale.lower(): tuple(task.activity for task in tasks)})
+        session = AratSessionScorer(
+            {args.subscale.lower(): tuple(task.activity for task in tasks)}
+        )
 
     worker = None
     emg_session = None
     shutdown = GracefulShutdown()
+    launcher_error: BaseException | None = None
     try:
         if args.emg:
             recording_path = (
-                Path(args.recording_path).expanduser() if args.recording_path else default_recording_path(tasks[0])
+                Path(args.recording_path).expanduser()
+                if args.recording_path
+                else default_recording_path(tasks[0])
             )
             emg_session = EmgSession(
                 emg_staging_path(recording_path),
@@ -1530,22 +2557,43 @@ def main(argv: list[str] | None = None) -> None:
                 decoder_hand=args.hand,
                 decoder_inference_hz=args.emg2pose_inference_hz or 5.0,
             )
-            print(f"Starting OYMotion EMG acquisition (staging: {emg_session.output_path.name})")
+            print(
+                f"Starting OYMotion EMG acquisition (staging: {emg_session.output_path.name})"
+            )
             emg_session.start(timeout=args.emg_connect_timeout)
             print(
                 f"EMG ready: {emg_session.metadata.get('device_name', 'OYMotion')} | "
                 f"{emg_session.channel_count} ch @ {emg_session.sample_rate_hz:g} Hz"
             )
-            print(f"EMG firmware filters: {emg_session.metadata.get('filter_configuration', 'unknown')}")
+            print(
+                f"EMG firmware filters: {emg_session.metadata.get('filter_configuration', 'unknown')}"
+            )
             if args.visualize_decoder:
                 print(
                     f"EMG2Pose target: {emg_session.metadata.get('decoder_inference_hz_target', 5.0):g} Hz | "
                     f"device: {emg_session.metadata.get('decoder_device', 'unknown')}"
                 )
         if not args.view_only:
-            source = _create_source(args)
-            retargeter = LandmarkRetargeter.from_hand_model(args.hand_model, hand_side=args.hand)
-            worker = TrackingRetargetingWorker(source, retargeter, Handedness(args.hand))
+            sources = _create_tracking_sources(args, tracking_selection)
+            retargeter = create_hand_retargeter(
+                args.retargeter, args.hand_model, hand_side=args.hand
+            )
+            fuser = HandObservationFuser(
+                maximum_skew_seconds=args.maximum_source_skew,
+                interpolate_wrist=True,
+                articulation_to_wrist=articulation_frame_transform,
+            )
+            worker = MultiSourceTrackingWorker(
+                sources=sources,
+                articulation_source=tracking_selection.hand_source,
+                wrist_source=tracking_selection.wrist_source,
+                retargeter=retargeter,
+                handedness=Handedness(args.hand),
+                record_articulation_sources=tracking_selection.record_hand_sources,
+                record_wrist_sources=tracking_selection.record_wrist_sources,
+                fuser=fuser,
+                retargeter_name=args.retargeter,
+            )
             worker.start()
         ran_any = False
         for task in tasks:
@@ -1579,15 +2627,42 @@ def main(argv: list[str] | None = None) -> None:
             session_path = write_session_result(session, results_dir)
             print(f"Wrote {session_path}")
     except KeyboardInterrupt:
-        print("\nStopping ARAT scene viewer" if args.view_only else "\nStopping ARAT teleoperation")
-    except Exception:
-        print("\nARAT launcher failed before shutdown:", file=sys.stderr, flush=True)
-        traceback.print_exc()
-        sys.stderr.flush()
+        print(
+            "\nStopping ARAT scene viewer"
+            if args.view_only
+            else "\nStopping ARAT teleoperation"
+        )
+    except BaseException as error:
+        launcher_error = error
+        if isinstance(error, Exception):
+            print(
+                "\nARAT launcher failed before shutdown:", file=sys.stderr, flush=True
+            )
+            traceback.print_exc()
+            sys.stderr.flush()
         raise
     finally:
-        if worker is not None:
-            worker.close()
-        if emg_session is not None:
-            emg_session.close()
-        og.shutdown()
+        cleanup_errors: list[tuple[str, BaseException]] = []
+        for label, close in (
+            ("tracking worker", None if worker is None else worker.close),
+            ("EMG session", None if emg_session is None else emg_session.close),
+            ("OmniGibson", lambda: _shutdown_omnigibson(og)),
+        ):
+            if close is None:
+                continue
+            try:
+                close()
+            except BaseException as error:
+                cleanup_errors.append((label, error))
+        cleanup_messages = [
+            f"Could not close {label}: {error}" for label, error in cleanup_errors
+        ]
+        if launcher_error is not None:
+            for message in cleanup_messages:
+                launcher_error.add_note(message)
+                LOGGER.error(message)
+        elif cleanup_errors:
+            failure = RuntimeError("ARAT launcher resources failed to close cleanly")
+            for message in cleanup_messages:
+                failure.add_note(message)
+            raise failure from cleanup_errors[0][1]

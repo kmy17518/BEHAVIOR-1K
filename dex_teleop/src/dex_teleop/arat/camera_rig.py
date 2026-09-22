@@ -13,6 +13,11 @@ import yaml
 
 CAMERA_RIGS_PATH = Path(__file__).with_name("camera_rigs.yaml")
 CAMERA_RIG_FILENAMES = ("camera_rigs.yaml", "arat_default.yaml")
+# Rig files packaged by other dex_teleop scenes; they share this registry so
+# the launchers' --camera-rig choices and the layout code stay uniform.
+EXTERNAL_CAMERA_RIG_PATHS = (
+    Path(__file__).resolve().parents[1] / "hand_bench" / "hand_bench.yaml",
+)
 SUPPORTED_SCHEMA_VERSION = 1
 
 
@@ -170,7 +175,9 @@ def _validate_rig(rig: CameraRig) -> None:
 def camera_rig_paths() -> tuple[Path, ...]:
     """Return all packaged camera-rig YAML files in deterministic order."""
 
-    return tuple(CAMERA_RIGS_PATH.with_name(filename) for filename in CAMERA_RIG_FILENAMES)
+    return tuple(CAMERA_RIGS_PATH.with_name(filename) for filename in CAMERA_RIG_FILENAMES) + tuple(
+        EXTERNAL_CAMERA_RIG_PATHS
+    )
 
 
 def _load_camera_rig_file(path: Path) -> dict:

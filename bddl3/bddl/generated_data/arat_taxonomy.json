@@ -1,0 +1,76 @@
+[
+  {
+    "name": "arat_wooden_block.n.01",
+    "parent": "block.n.01",
+    "categories": ["arat_wooden_block"]
+  },
+  {
+    "name": "arat_cricket_ball.n.01",
+    "parent": "ball.n.01",
+    "categories": ["arat_cricket_ball"]
+  },
+  {
+    "name": "arat_sharpening_stone.n.01",
+    "parent": "stone.n.02",
+    "categories": ["arat_sharpening_stone"]
+  },
+  {
+    "name": "arat_tin.n.01",
+    "parent": "container.n.01",
+    "categories": ["arat_tin"],
+    "abilities": {
+      "rigidBody": {}
+    }
+  },
+  {
+    "name": "arat_marble.n.01",
+    "parent": "ball.n.01",
+    "categories": ["arat_marble"]
+  },
+  {
+    "name": "arat_ball_bearing.n.01",
+    "parent": "ball.n.01",
+    "categories": ["arat_ball_bearing"]
+  },
+  {
+    "name": "arat_washer.n.01",
+    "parent": "washer.n.03",
+    "categories": ["arat_washer"]
+  },
+  {
+    "name": "arat_cup.n.01",
+    "parent": "cup.n.01",
+    "categories": ["arat_cup"]
+  },
+  {
+    "name": "arat_alloy_tube.n.01",
+    "parent": "tube.n.01",
+    "categories": ["arat_alloy_tube"],
+    "abilities": {
+      "rigidBody": {}
+    }
+  },
+  {
+    "name": "arat_tube_fixture.n.01",
+    "parent": "fixture.n.01",
+    "categories": ["arat_tube_planks_and_pegs"]
+  },
+  {
+    "name": "arat_plank.n.01",
+    "parent": "board.n.02",
+    "categories": ["arat_plank"]
+  },
+  {
+    "name": "arat_bolt.n.01",
+    "parent": "dowel.n.01",
+    "categories": ["arat_bolt"]
+  },
+  {
+    "name": "arat_box.n.01",
+    "parent": "box.n.01",
+    "categories": ["arat_box"],
+    "abilities": {
+      "openable": {}
+    }
+  }
+]

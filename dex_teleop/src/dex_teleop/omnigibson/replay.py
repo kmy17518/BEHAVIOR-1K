@@ -25,17 +25,15 @@ from dex_teleop.omnigibson.launcher import (
 )
 
 
-LEFT_CAMERA_KEY = "external::arat_left_shoulder_camera::rgb"
-RIGHT_CAMERA_KEY = "external::arat_right_shoulder_camera::rgb"
-THUMB_WRIST_CAMERA_KEY = "external::arat_wrist_camera_thumb::rgb"
-PINKY_WRIST_CAMERA_KEY = "external::arat_wrist_camera_pinky::rgb"
 EVALUATION_TEXT_SCALE = 1.5
 EVALUATION_PANEL_HEIGHT = 600
-REPLAY_CAMERA_IDS = ("left_shoulder", "right_shoulder", "thumb_wrist", "pinky_wrist")
+REPLAY_CORNER_CAMERA_IDS = ("left_shoulder", "right_shoulder", "thumb_wrist", "pinky_wrist")
 DEFAULT_CAMERA_RIG_NAME = next(iter(AratTaskCatalog().tasks.values())).camera_rig
-_DEFAULT_CAMERA_CALIBRATION = load_camera_rig(DEFAULT_CAMERA_RIG_NAME).calibration("left_shoulder")
-DEFAULT_CAMERA_IMAGE_WIDTH = _DEFAULT_CAMERA_CALIBRATION["image_width"]
-DEFAULT_CAMERA_IMAGE_HEIGHT = _DEFAULT_CAMERA_CALIBRATION["image_height"]
+_DEFAULT_CAMERA_RIG = load_camera_rig(DEFAULT_CAMERA_RIG_NAME)
+_DEFAULT_MAIN_CAMERA_ID = _DEFAULT_CAMERA_RIG.layout("teleop")["viewports"]["main"]["camera"]
+_DEFAULT_MAIN_CAMERA_CALIBRATION = _DEFAULT_CAMERA_RIG.calibration(_DEFAULT_MAIN_CAMERA_ID)
+DEFAULT_MAIN_CAMERA_IMAGE_WIDTH = _DEFAULT_MAIN_CAMERA_CALIBRATION["image_width"]
+DEFAULT_MAIN_CAMERA_IMAGE_HEIGHT = _DEFAULT_MAIN_CAMERA_CALIBRATION["image_height"]
 
 
 @dataclass(frozen=True)
@@ -105,15 +103,23 @@ def default_output_path(input_path: str | Path, episode_id: int) -> Path:
     return input_path.with_name(f"{input_path.stem}_demo_{episode_id}.mp4")
 
 
+def replay_camera_ids(camera_rig_name: str = DEFAULT_CAMERA_RIG_NAME) -> tuple[str, ...]:
+    """Return the configured main camera followed by the four corner cameras."""
+
+    camera_rig = load_camera_rig(camera_rig_name)
+    main_camera_id = camera_rig.layout("teleop")["viewports"]["main"]["camera"]
+    return tuple(dict.fromkeys((main_camera_id, *REPLAY_CORNER_CAMERA_IDS)))
+
+
 def build_replay_camera_configs(camera_rig_name: str = DEFAULT_CAMERA_RIG_NAME) -> list[dict]:
-    """Enable RGB observations on the four cameras used during ARAT teleoperation."""
+    """Enable RGB observations on the cameras used in the replay mosaic."""
 
     camera_rig = load_camera_rig(camera_rig_name)
     cameras = build_camera_sensor_configs(
         camera_rig,
         "teleop",
         robot_prim_path=ROBOT_PRIM_PATH,
-        camera_ids=REPLAY_CAMERA_IDS,
+        camera_ids=replay_camera_ids(camera_rig_name),
         viewport_name=None,
     )
     for camera in cameras:
@@ -157,6 +163,65 @@ def _load_font(size: int, *, bold: bool = False):
         return ImageFont.truetype(name, size)
     except OSError:
         return ImageFont.load_default()
+
+
+def _fit_frame(frame: np.ndarray, *, width: int, height: int) -> np.ndarray:
+    """Resize one RGB frame into a cell without changing its aspect ratio."""
+
+    frame = np.asarray(frame)
+    if frame.ndim != 3 or frame.shape[2] < 3:
+        raise ValueError(f"Expected an RGB frame, got shape {frame.shape}")
+    frame = frame[..., :3].astype(np.uint8, copy=False)
+    source_height, source_width = frame.shape[:2]
+    scale = min(width / source_width, height / source_height)
+    resized_width = max(1, round(source_width * scale))
+    resized_height = max(1, round(source_height * scale))
+    resized = np.asarray(
+        Image.fromarray(frame).resize((resized_width, resized_height), Image.Resampling.LANCZOS)
+    )
+    fitted = np.zeros((height, width, 3), dtype=np.uint8)
+    x = (width - resized_width) // 2
+    y = (height - resized_height) // 2
+    fitted[y : y + resized_height, x : x + resized_width] = resized
+    return fitted
+
+
+def compose_replay_frame(
+    *,
+    main: np.ndarray,
+    left_shoulder: np.ndarray,
+    right_shoulder: np.ndarray,
+    thumb_wrist: np.ndarray,
+    pinky_wrist: np.ndarray,
+) -> np.ndarray:
+    """Compose the launch-style replay layout with a two-row center view."""
+
+    main = np.asarray(main)
+    if main.ndim != 3 or main.shape[2] < 3:
+        raise ValueError(f"Expected an RGB main frame, got shape {main.shape}")
+    main_height, main_width = main.shape[:2]
+    if main_width < 2 or main_height < 2:
+        raise ValueError(f"Main replay frame is too small: {main.shape}")
+
+    side_width = main_width // 2
+    top_height = main_height // 2
+    bottom_height = main_height - top_height
+    left_column = np.concatenate(
+        (
+            _fit_frame(left_shoulder, width=side_width, height=top_height),
+            _fit_frame(thumb_wrist, width=side_width, height=bottom_height),
+        ),
+        axis=0,
+    )
+    right_column = np.concatenate(
+        (
+            _fit_frame(right_shoulder, width=side_width, height=top_height),
+            _fit_frame(pinky_wrist, width=side_width, height=bottom_height),
+        ),
+        axis=0,
+    )
+    center = _fit_frame(main, width=main_width, height=main_height)
+    return np.concatenate((left_column, center, right_column), axis=1)
 
 
 def _pixel_wrapped_lines(draw, text: str, font, max_width: int) -> list[str]:
@@ -320,7 +385,7 @@ def render_evaluation_panel(
     task_name: str,
     step_index: int,
     total_steps: int,
-    width: int = DEFAULT_CAMERA_IMAGE_WIDTH * 3,
+    width: int = DEFAULT_MAIN_CAMERA_IMAGE_WIDTH * 2,
     height: int = EVALUATION_PANEL_HEIGHT,
 ) -> np.ndarray:
     """Render a readable BDDL/ARAT decision dashboard for one video frame."""
@@ -506,19 +571,29 @@ def render_evaluation_panel(
 def _create_video_playback_wrapper_class(
     evaluation_steps: list[dict] | None = None,
     task_name: str = "",
-    camera_width: int = DEFAULT_CAMERA_IMAGE_WIDTH,
-    camera_height: int = DEFAULT_CAMERA_IMAGE_HEIGHT,
+    camera_keys: dict[str, str] | None = None,
+    main_width: int = DEFAULT_MAIN_CAMERA_IMAGE_WIDTH,
+    main_height: int = DEFAULT_MAIN_CAMERA_IMAGE_HEIGHT,
 ):
     from omnigibson.envs import DataPlaybackWrapper
     from omnigibson.eval.utils.obs_utils import create_video_writer, write_video
 
+    if camera_keys is None:
+        camera_rig = load_camera_rig(DEFAULT_CAMERA_RIG_NAME)
+        camera_keys = {
+            camera_id: f"external::{camera_rig.camera(camera_id)['sensor_name']}::rgb"
+            for camera_id in replay_camera_ids(DEFAULT_CAMERA_RIG_NAME)
+        }
+        main_camera_id = camera_rig.layout("teleop")["viewports"]["main"]["camera"]
+        camera_keys["main"] = camera_keys[main_camera_id]
+
     class AratVideoPlaybackWrapper(DataPlaybackWrapper):
         def _create_video_writers(self, video_keys):
             output_path = Path(self.video_output_dir) / f"{video_keys['aggregated']}.mp4"
-            output_height = camera_height + (EVALUATION_PANEL_HEIGHT if evaluation_steps is not None else 0)
+            output_height = main_height + (EVALUATION_PANEL_HEIGHT if evaluation_steps is not None else 0)
             container, stream = create_video_writer(
                 fpath=str(output_path),
-                resolution=(output_height, camera_width * 4),
+                resolution=(output_height, main_width + 2 * (main_width // 2)),
                 rate=self.fps,
                 stream_options={"crf": "30"},
             )
@@ -527,13 +602,13 @@ def _create_video_playback_wrapper_class(
 
         def _write_video_frames(self):
             container, stream, _ = self.video_writers[0]
-            frames = [
-                self._extract_frame_from_obs(self.current_obs, LEFT_CAMERA_KEY),
-                self._extract_frame_from_obs(self.current_obs, RIGHT_CAMERA_KEY),
-                self._extract_frame_from_obs(self.current_obs, THUMB_WRIST_CAMERA_KEY),
-                self._extract_frame_from_obs(self.current_obs, PINKY_WRIST_CAMERA_KEY),
-            ]
-            frame = np.concatenate(frames, axis=1)
+            frame = compose_replay_frame(
+                main=self._extract_frame_from_obs(self.current_obs, camera_keys["main"]),
+                left_shoulder=self._extract_frame_from_obs(self.current_obs, camera_keys["left_shoulder"]),
+                right_shoulder=self._extract_frame_from_obs(self.current_obs, camera_keys["right_shoulder"]),
+                thumb_wrist=self._extract_frame_from_obs(self.current_obs, camera_keys["thumb_wrist"]),
+                pinky_wrist=self._extract_frame_from_obs(self.current_obs, camera_keys["pinky_wrist"]),
+            )
             if evaluation_steps is not None:
                 trace = (
                     None
@@ -611,19 +686,22 @@ def replay_hdf5_to_video(
     gm.USE_PBR_MATERIALS = True
     gm.RENDER_VIEWER_CAMERA = False
 
+    camera_rig = load_camera_rig(task.camera_rig)
+    camera_ids = replay_camera_ids(task.camera_rig)
     replay_camera_configs = build_replay_camera_configs(task.camera_rig)
-    replay_resolutions = {
-        (camera["sensor_kwargs"]["image_width"], camera["sensor_kwargs"]["image_height"])
-        for camera in replay_camera_configs
+    main_camera_id = camera_rig.layout("teleop")["viewports"]["main"]["camera"]
+    main_calibration = camera_rig.calibration(main_camera_id)
+    camera_keys = {
+        camera_id: f"external::{camera_rig.camera(camera_id)['sensor_name']}::rgb"
+        for camera_id in camera_ids
     }
-    if len(replay_resolutions) != 1:
-        raise ValueError("Replay requires both shoulder and both wrist cameras to share a resolution")
-    camera_width, camera_height = replay_resolutions.pop()
+    camera_keys["main"] = camera_keys[main_camera_id]
     wrapper_class = _create_video_playback_wrapper_class(
         evaluation_steps=evaluation_steps,
         task_name=task_name,
-        camera_width=camera_width,
-        camera_height=camera_height,
+        camera_keys=camera_keys,
+        main_width=main_calibration["image_width"],
+        main_height=main_calibration["image_height"],
     )
     env = wrapper_class.create_from_hdf5(
         input_path=str(input_path),
@@ -637,7 +715,7 @@ def replay_hdf5_to_video(
         include_contacts=True,
     )
     try:
-        apply_camera_lens_models(load_camera_rig(task.camera_rig), env.external_sensors, REPLAY_CAMERA_IDS)
+        apply_camera_lens_models(camera_rig, env.external_sensors, camera_ids)
         _validate_loaded_apparatus(env, task)
         _hide_skybox_from_camera()
         _restore_replay_visual_state(env)

@@ -212,6 +212,12 @@ def test_supervisor_welds_after_sustained_opposition():
     assert robot.establish_calls == [("block", "base_link")]
     assert robot._ag_obj_in_hand["0"] is obj
     assert messages == ["assisted grasp welded block:base_link via ring+thumb"]
+    assert supervisor.last_event == {
+        "kind": "welded",
+        "object": "block",
+        "target_link_name": "base_link",
+        "digits": ["ring", "thumb"],
+    }
 
 
 def test_weld_freezes_grasping_digits_at_measured_posture():
@@ -323,6 +329,7 @@ def test_supervisor_releases_when_the_grasping_digits_open():
     assert robot._ag_obj_in_hand["0"] is None
     assert supervisor.frozen_fingers is None
     assert messages[-1] == "assisted grasp released block"
+    assert supervisor.last_event == {"kind": "released", "object": "block"}
 
 
 def test_supervisor_releases_when_opposition_breaks_on_one_side():
@@ -439,6 +446,9 @@ def test_supervisor_treats_a_broken_weld_as_released():
     assert robot.release_calls == 1
     assert supervisor.frozen_fingers is None
     assert "broke" in messages[-1]
+    assert supervisor.last_event["kind"] == "broke"
+    assert supervisor.last_event["object"] == "block"
+    assert supervisor.last_event["drift_m"] == pytest.approx(0.12)
 
 
 def test_supervisor_adopts_an_unknown_weld_until_the_hand_opens():
