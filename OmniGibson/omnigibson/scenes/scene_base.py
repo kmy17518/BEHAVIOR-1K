@@ -1,4 +1,5 @@
 import contextlib
+import copy
 import json
 import os
 import shutil
@@ -69,6 +70,7 @@ class Scene(Serializable, Registerable, Recreatable, ABC):
         floor_plane_color=(1.0, 1.0, 1.0),
         use_skybox=True,
         include_robots=True,
+        task_metadata=None,
     ):
         """
         Args:
@@ -81,6 +83,8 @@ class Scene(Serializable, Registerable, Recreatable, ABC):
                 to the generated floor plane
             use_skybox (bool): whether to load a skybox into the simulator
             include_robots (bool): whether to also include the robot(s) defined in the scene
+            task_metadata (None or dict): Optional task metadata to expose before the task is loaded. This is useful
+                for programmatically constructed offline BehaviorTask scenes that do not use a saved scene file.
         """
         # Store internal variables
         self.scene_file = scene_file
@@ -101,6 +105,8 @@ class Scene(Serializable, Registerable, Recreatable, ABC):
         self._updated_state_objects = None
         self._include_robots = include_robots
         self._task_metadata = {}
+        if task_metadata is not None:
+            self._task_metadata.update(copy.deepcopy(task_metadata))
 
         # Call super init
         super().__init__()

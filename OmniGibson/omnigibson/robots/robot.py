@@ -108,6 +108,7 @@ class Robot(USDObject, GymObservable):
         # Shared kwargs in hierarchy
         name,
         model,
+        dataset_name="omnigibson-robot-assets",
         scale=None,
         visible=True,
         fixed_base=False,
@@ -148,6 +149,8 @@ class Robot(USDObject, GymObservable):
         Args:
             name (str): Name for the object. Names need to be unique per scene
             model (str): Model of Robot.
+            dataset_name (str): Dataset containing this robot's definition and runtime assets. Defaults to
+                ``omnigibson-robot-assets``.
             scale (None or float or 3-array): if specified, sets either the uniform (float) or x,y,z (3-array) scale
                 for this object. A single number corresponds to uniform scaling along the x,y,z axes, whereas a
                 3-array specifies per-axis scaling.
@@ -212,10 +215,9 @@ class Robot(USDObject, GymObservable):
                 for flexible compositions of various object subclasses (e.g.: Robot is USDObject).
         """
         self.model = model
+        self._dataset_name = dataset_name
         # Read and validate robot definition YAML file using OmegaConf
-        definition_path = os.path.join(
-            get_dataset_path("omnigibson-robot-assets"), "models", self.model, self.model + ".yaml"
-        )
+        definition_path = os.path.join(get_dataset_path(self._dataset_name), "models", self.model, self.model + ".yaml")
         yaml_definition = OmegaConf.load(definition_path)
         schema = OmegaConf.structured(RobotDefinition)
         merged_definition = OmegaConf.merge(schema, yaml_definition)
@@ -299,6 +301,8 @@ class Robot(USDObject, GymObservable):
         self._rigid_contact_view = None
         self._rigid_contact_view_row_path_to_idx = {}
         self._rigid_contact_view_col_path_to_idx = {}
+        self._rigid_contact_view_row_paths = []
+        self._rigid_contact_view_col_paths = []
 
         # All BaseRobots should have xform properties pre-loaded
         load_config = {} if load_config is None else load_config
@@ -1250,10 +1254,6 @@ class Robot(USDObject, GymObservable):
         self._reset_joint_pos_aabb_extent = self.aabb_extent
 
         if self.is_manipulation:
-            # make eef link not visible
-            for arm in self.arm_names:
-                self._links[self.eef_link_names[arm]].visible = False
-
             # Infer relevant link properties, e.g.: fingertip location, AG grasping points
             # We use a try / except to maintain backwards-compatibility with robots that do not follow our
             # OG-specified convention
@@ -1306,28 +1306,42 @@ class Robot(USDObject, GymObservable):
             self._rigid_contact_view = None
             self._rigid_contact_view_row_path_to_idx = {}
             self._rigid_contact_view_col_path_to_idx = {}
+            self._rigid_contact_view_row_paths = []
+            self._rigid_contact_view_col_paths = []
             return
 
         # Collect finger prim paths across all arms — these become the columns of the contact view.
-        finger_paths = sorted({link.prim_path for links in self.finger_links.values() for link in links})
+        # The palm (eef link) is included as well so palm contacts also expose per-point data.
+        hand_paths = {link.prim_path for links in self.finger_links.values() for link in links}
+        for arm_name in self.arm_names:
+            eef_link = self._links.get(self.eef_link_names[arm_name])
+            if eef_link is not None:
+                hand_paths.add(eef_link.prim_path)
+        finger_paths = sorted(hand_paths)
         if len(finger_paths) == 0:
             self._rigid_contact_view = None
             self._rigid_contact_view_row_path_to_idx = {}
             self._rigid_contact_view_col_path_to_idx = {}
+            self._rigid_contact_view_row_paths = []
+            self._rigid_contact_view_col_paths = []
             return
 
         # Rows are dynamic rigid bodies in the robot's scene; columns are the robot's fingers.
+        # The data budget allows several contact points per (body, finger) pair so consumers
+        # (e.g. grasp evaluation) can read whole contact patches, not just one point.
         with suppress_omni_log(channels=["omni.physx.tensors.plugin"]):
             self._rigid_contact_view = og.sim.physics_sim_view.create_rigid_contact_view(
                 pattern=f"/World/scene_{self.scene.idx}/*/*",
                 filter_patterns=finger_paths,
-                max_contact_data_count=len(finger_paths) * 8,
+                max_contact_data_count=len(finger_paths) * 32,
             )
 
         row_paths = list(self._rigid_contact_view.sensor_paths)
         col_paths = list(getattr(self._rigid_contact_view, "filter_patterns", finger_paths))
         self._rigid_contact_view_row_path_to_idx = {path: i for i, path in enumerate(row_paths)}
         self._rigid_contact_view_col_path_to_idx = {path: i for i, path in enumerate(col_paths)}
+        self._rigid_contact_view_row_paths = row_paths
+        self._rigid_contact_view_col_paths = col_paths
 
     def _find_finger_contact_position(self, arm, target_link_prim_path):
         """
@@ -1365,6 +1379,59 @@ class Robot(USDObject, GymObservable):
                 continue
             return th.as_tensor(points[start], dtype=th.float32)
         return None
+
+    def get_finger_contact_data(self, arm="default"):
+        """
+        Collects all reported contact points between this robot's hand links (fingers and palm)
+        for @arm and any non-robot rigid body, using this robot's rigid contact view.
+
+        Args:
+            arm (str): Arm whose hand links should be queried. Defaults to the robot's default arm.
+
+        Returns:
+            list of 6-tuples (hand_link_prim_path, other_body_prim_path, position, normal, force, separation):
+                one entry per reported contact point, where position, normal, and force are (3,)
+                world-frame float tensors and separation is a float
+        """
+        arm = self.default_arm if arm == "default" else arm
+        if self._rigid_contact_view is None:
+            return []
+
+        forces, points, normals, separations, contact_counts, start_indices = self._rigid_contact_view.get_contact_data(
+            dt=og.sim.get_physics_dt()
+        )
+        contact_counts = th.as_tensor(contact_counts)
+        if not th.any(contact_counts > 0):
+            return []
+
+        hand_link_paths = {link.prim_path for link in self.finger_links[arm]}
+        eef_link = self._links.get(self.eef_link_names[arm])
+        if eef_link is not None:
+            hand_link_paths.add(eef_link.prim_path)
+        own_link_paths = set(self.link_prim_paths)
+
+        data = []
+        for row_idx, col_idx in (contact_counts > 0).nonzero().tolist():
+            col_path = self._rigid_contact_view_col_paths[col_idx]
+            if col_path not in hand_link_paths:
+                continue
+            row_path = self._rigid_contact_view_row_paths[row_idx]
+            if row_path in own_link_paths:
+                continue
+            count = int(contact_counts[row_idx, col_idx])
+            start = int(start_indices[row_idx, col_idx])
+            for i in range(start, min(start + count, len(points))):
+                data.append(
+                    (
+                        col_path,
+                        row_path,
+                        th.as_tensor(points[i], dtype=th.float32),
+                        th.as_tensor(normals[i], dtype=th.float32),
+                        th.as_tensor(forces[i], dtype=th.float32),
+                        float(separations[i]),
+                    )
+                )
+        return data
 
     def _load_sensors(self):
         """
@@ -2261,16 +2328,16 @@ class Robot(USDObject, GymObservable):
     def usd_path(self):
         # Check top-level usd_path
         if self._definition.usd_path:
-            return os.path.join(get_dataset_path("omnigibson-robot-assets"), self._definition.usd_path)
+            return os.path.join(get_dataset_path(self._dataset_name), self._definition.usd_path)
         # Check end-effector specific usd_path
         if self.has_end_effector_variants:
             eef_def = self._get_end_effector_definition()
             if eef_def and eef_def.usd_path:
-                return os.path.join(get_dataset_path("omnigibson-robot-assets"), eef_def.usd_path)
+                return os.path.join(get_dataset_path(self._dataset_name), eef_def.usd_path)
 
         # By default, sets the standardized path
         model = self.model.lower()
-        return os.path.join(get_dataset_path("omnigibson-robot-assets"), f"models/{model}/usd/{model}.usda")
+        return os.path.join(get_dataset_path(self._dataset_name), f"models/{model}/usd/{model}.usda")
 
     @property
     def urdf_path(self):
@@ -2280,18 +2347,18 @@ class Robot(USDObject, GymObservable):
         """
         # Check top-level urdf_path
         if self._definition.urdf_path:
-            return os.path.join(get_dataset_path("omnigibson-robot-assets"), self._definition.urdf_path)
+            return os.path.join(get_dataset_path(self._dataset_name), self._definition.urdf_path)
         # Check end-effector specific urdf_path
         if self.has_end_effector_variants:
             eef_def = self._get_end_effector_definition()
             if eef_def:
                 assert not eef_def.not_support_urdf, "Robot doesn't support URDF."
                 if eef_def.urdf_path:
-                    return os.path.join(get_dataset_path("omnigibson-robot-assets"), eef_def.urdf_path)
+                    return os.path.join(get_dataset_path(self._dataset_name), eef_def.urdf_path)
 
         # By default, sets the standardized path
         model = self.model.lower()
-        return os.path.join(get_dataset_path("omnigibson-robot-assets"), f"models/{model}/urdf/{model}.urdf")
+        return os.path.join(get_dataset_path(self._dataset_name), f"models/{model}/urdf/{model}.urdf")
 
     @property
     def base_footprint_link_name(self):
@@ -3294,12 +3361,12 @@ class Robot(USDObject, GymObservable):
         """
         # Check top-level curobo_path
         if self._definition.curobo_path:
-            return os.path.join(get_dataset_path("omnigibson-robot-assets"), self._definition.curobo_path)
+            return os.path.join(get_dataset_path(self._dataset_name), self._definition.curobo_path)
         # Check end-effector specific curobo_path
         if self.has_end_effector_variants:
             eef_def = self._get_end_effector_definition()
             if eef_def and eef_def.curobo_path:
-                return os.path.join(get_dataset_path("omnigibson-robot-assets"), eef_def.curobo_path)
+                return os.path.join(get_dataset_path(self._dataset_name), eef_def.curobo_path)
             else:
                 assert False, "Robot not supported for curobo."
 
@@ -3310,7 +3377,7 @@ class Robot(USDObject, GymObservable):
         model = self.model.lower()
         return {
             emb_sel: os.path.join(
-                get_dataset_path("omnigibson-robot-assets"),
+                get_dataset_path(self._dataset_name),
                 f"models/{model}/curobo/{model}_description_curobo_{emb_sel.value}.yaml",
             )
             for emb_sel in CuRoboEmbodimentSelection

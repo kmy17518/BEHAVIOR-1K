@@ -154,7 +154,13 @@ class BehaviorTask(BaseTask):
         # Possibly modify the scene to load if we're using online_object_sampling
         scene_instance, scene_file = scene_cfg["scene_instance"], scene_cfg["scene_file"]
         activity_name = task_cfg["activity_name"]
-        if scene_file is None and scene_instance is None and not task_cfg["online_object_sampling"]:
+        has_explicit_task_metadata = scene_cfg.get("task_metadata") is not None
+        if (
+            scene_file is None
+            and scene_instance is None
+            and not has_explicit_task_metadata
+            and not task_cfg["online_object_sampling"]
+        ):
             scene_instance = cls.get_cached_activity_scene_filename(
                 scene_model=scene_cfg.get("scene_model", "Scene"),
                 activity_name=activity_name,
