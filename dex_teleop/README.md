@@ -1,396 +1,174 @@
-# dex_teleop
+# dex_teleop: Sharpa hand bench quick start
 
-`dex_teleop` converts named 21-landmark hand frames into robot-hand joint
-commands and connects those commands to OmniGibson teleoperation. The tracking
-source, retargeter, and simulator adapter are independent boundaries:
+A right Sharpa hand fixed above a table in OmniGibson (Isaac Sim 5.1). Its 22
+finger joints follow a MANUS glove (or Quest hand tracking); the wrist is held
+by the simulator, so no wrist tracker is involved. Press `B` to switch between
+the default view (back of the hand) and the egocentric view (palm).
+
+These steps were verified on Ubuntu 22.04 with an RTX 4090 in a fresh conda
+environment. Budget roughly 30 minutes of downloads (Isaac Sim wheels plus
+3.8 GB of robot assets) and 40 GB of disk.
+
+## 0. Prerequisites
+
+- Ubuntu 22.04, an NVIDIA RTX GPU with about 6 GB of free VRAM, and a recent
+  NVIDIA driver (the default install uses CUDA 12.8 PyTorch wheels; pass
+  `--cuda-version 12.6` to `setup.sh` if the driver is older).
+- `git`, `conda` (Miniconda is fine), `curl`, `unzip`.
+- Two asset archives from Minyeong: `hand_bench_arat_datasets.zip` and
+  `hand_bench_sharpa_robot_assets.zip` (see step 3).
+- For the glove: MANUS Metagloves with their wireless dongle, the Linux SDK
+  package `MANUS_Core_3.1.1_SDK.zip` (MANUS resources page or from Minyeong),
+  and a `.mcal` glove calibration for the person wearing the glove.
+
+## 1. Get the code
+
+```bash
+git clone --branch arat git@github.com:kmy17518/BEHAVIOR-1K.git Behavior-1K-arat
+# or: git clone --branch arat https://github.com/kmy17518/BEHAVIOR-1K.git Behavior-1K-arat
+cd Behavior-1K-arat
+```
+
+Already have a clone? `git fetch origin && git checkout arat && git pull`.
+Everything below runs from this `Behavior-1K-arat` directory.
+
+## 2. Create the conda environment
+
+```bash
+./setup.sh --new-env behavior_dex --omnigibson --bddl --dex-teleop
+conda activate behavior_dex
+```
+
+Answer `y` to the Conda/NVIDIA terms prompt (or add `--accept-conda-tos
+--accept-nvidia-eula`). Do **not** pass `--dataset`: it downloads the 30+ GB
+BEHAVIOR-1K scene assets, which the bench does not use. The script installs
+Python 3.11, PyTorch, BDDL, OmniGibson, Isaac Sim 5.1, and `dex_teleop`
+(editable, with its NLopt/Pinocchio retargeting dependencies).
+
+## 3. Assets
+
+All assets live in `datasets/` inside the checkout (git ignores them).
+
+```bash
+# 3a. Official OmniGibson robot assets, 3.8 GB from HuggingFace -> datasets/omnigibson-robot-assets
+OMNI_KIT_ACCEPT_EULA=YES python -m omnigibson.utils.asset_utils --download_omnigibson_robot_assets
+
+# 3b. Sharpa hand + ARAT assets from the two zips (they are not downloadable)
+unzip -o /path/to/hand_bench_sharpa_robot_assets.zip -d datasets/
+unzip -o /path/to/hand_bench_arat_datasets.zip -d datasets/
+
+# 3c. Check
+python -c "from dex_teleop.hand_bench import load_hand_bench_scene, validate_runtime_assets; validate_runtime_assets(load_hand_bench_scene()); print('hand bench assets OK')"
+```
+
+After unzipping, `datasets/` contains:
 
 ```text
-HandTrackingSource -> HandFrame -> LandmarkRetargeter -> RetargetedHandCommand
-                                                        -> OmniGibson adapter
+datasets/omnigibson-robot-assets/models/franka/franka.yaml                     <- replaced: adds the sharpa_right end effector
+datasets/omnigibson-robot-assets/models/franka/franka_dexhand/franka_sharpa_right/  <- Franka + Sharpa USD/URDF/meshes
+datasets/omnigibson-robot-assets/models/franka_mounted_sharpa_{right,left}/     <- standalone Franka+Sharpa robot models
+datasets/arat-assets-v1/                                                        <- table used by the bench, ARAT objects, arat_base scene
+datasets/arat-task-instances/                                                   <- 19 ARAT task scene instances (ARAT launcher only)
 ```
 
-The initial release accepts Meta Quest Hand Tracking Streamer (HTS) input,
-retargets landmarks for Shadow, Sharpa, and Wuji hands, and executes the Sharpa
-command on the bundled Franka--Sharpa OmniGibson robot. OVXR is intentionally
-not selected automatically; an OVXR source adapter can be added without
-changing any retargeter or robot adapter.
-
-The module boundaries are:
-
-- `tracking`: lifecycle-managed HTS and future OVXR producers of canonical
-  `HandFrame` values.
-- `retargeting`: packaged configurations, URDFs, Pinocchio kinematics, and the
-  NLopt optimizer for Shadow, Sharpa, and Wuji.
-- `hands`: named joint-count and execution-order contracts.
-- `omnigibson`: the initial right-hand Sharpa execution adapter and launcher.
-- `arat`: the 19-activity catalog, 6/4/6/3 subscale grouping, and version-1
-  per-task ARAT scene resolver.
-
-There is no runtime import, path lookup, or package dependency on an external
-AnyDexRetarget checkout. Solver errors and unavailable/stale selected tracking
-sources are reported; they do not trigger another source or command fallback.
-
-HTS wrist and landmark lines carrying the same source frame ID (`f`) and
-monotonic nanosecond timestamp (`t`) are assembled as one hand pose. The raw
-values are retained on `HandFrame.source_frame_id` and
-`HandFrame.source_timestamp_ns`; `HandFrame.timestamp` maps the HTS clock into
-the desktop monotonic clock domain, while `HandFrame.receipt_timestamp` records
-when the complete pair became available on the desktop. Input freshness uses
-receipt time rather than the aligned capture time. Every hand record must carry
-both metadata fields, and the wrist and landmarks metadata must match exactly;
-missing or inconsistent metadata fails the HTS source instead of falling back
-to arrival-order pairing. A UDP datagram must contain the complete pair. TCP
-may split the two newline-delimited records across reads, but a mismatched pair
-or a connection that stalls or closes mid-pair also fails the source. Enable
-header/debug metadata in the HTS app.
-
-## Installation
-
-Install the package and its direct retargeting dependencies through the
-repository setup script:
+## 4. Smoke test without hardware
 
 ```bash
-./setup.sh --dex-teleop
+# Interactive window: the hand stays open; B toggles the view, Ctrl+C exits
+python dex_teleop/scripts/launch_hand_bench.py --view-only
+
+# No display (e.g. over SSH): render both views to PNG and exit
+OMNIGIBSON_HEADLESS=1 python dex_teleop/scripts/launch_hand_bench.py --screenshot-dir dex_teleop/outputs/hand_bench
 ```
 
-For the OmniGibson ARAT launcher, install it together with OmniGibson and BDDL:
+The first launch compiles shaders and can take several minutes; later launches
+take about 30 s. A successful load prints `Hand bench ready: right_hand_C_MC at
+[0.0, 0.0, 0.891] ... tabletop at 0.750 m`.
+
+## 5. MANUS Integrated SDK (Linux, gloves only)
+
+The bench talks to the gloves through a small C++ sidecar that is compiled
+against the official SDK; the proprietary SDK files stay outside the repository.
 
 ```bash
-./setup.sh --new-env behavior --omnigibson --bddl --dex-teleop
+# 5a. Build tools and libraries the SDK needs
+sudo apt install build-essential libusb-1.0-0-dev libudev-dev zlib1g-dev
+
+# 5b. Unpack the SDK where dex_teleop looks for it (the zip already contains a
+#     top-level ManusSDK_v3.1.1/ folder); MANUS_SDK_ROOT=<dir> overrides the search
+mkdir -p ~/manus_setup/vendor
+unzip MANUS_Core_3.1.1_SDK.zip -d ~/manus_setup/vendor/
+ls ~/manus_setup/vendor/ManusSDK_v3.1.1/SDKClient_Linux/ManusSDK/{include,lib}
+#   must show ManusSDK.h ... and libManusSDK_Integrated.so
+
+# 5c. Let your user open the dongle (once), then re-plug the dongle
+sudo tee /etc/udev/rules.d/70-manus-hid.rules >/dev/null <<'EOF'
+# HIDAPI/libusb
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="3325", MODE:="0666"
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="1915", ATTRS{idProduct}=="83fd", MODE:="0666"
+
+# HIDAPI/hidraw
+KERNEL=="hidraw*", ATTRS{idVendor}=="3325", MODE:="0666"
+EOF
+sudo udevadm control --reload-rules && sudo udevadm trigger
+
+# 5d. Build the Integrated sidecar (-> ~/.cache/dex_teleop/manus_bridge/manus_bridge)
+bash dex_teleop/src/dex_teleop/native/manus_bridge/build_manus_bridge.sh --mode integrated --sdk-root ~/manus_setup
+
+# 5e. Validate with the glove on, dongle plugged in; move your fingers for 10 s
+dex-teleop-manus-diagnostics --mode integrated --hand right --duration 10 \
+  --glove-calibration /path/to/right-hand.mcal --output /tmp/manus_diagnostics.jsonl
 ```
 
-The flag performs an editable install of `dex_teleop`; its package metadata
-installs NLopt, Pinocchio (`pin`), SciPy, PyYAML, and NumPy below version 2.
-The ignored runtime dataset `datasets/arat-assets` is separate and is not
-downloaded or generated by this flag.
+The diagnostics print a JSON summary and exit 0 when `"passed": true`. If the
+build already exists it is reused; rerun 5d after updating the SDK. Pairing,
+firmware updates, license provisioning, and creating the `.mcal` calibration
+are done in MANUS Core on Windows; the Linux Integrated SDK only consumes
+them. The `.mcal` is optional (`--manus-calibration` may be omitted) but finger
+angles are only accurate with the wearer's own calibration.
 
-## ARAT launcher
-
-Run from the BEHAVIOR-1K checkout root in the `behavior_dex` environment. The
-launcher requires `datasets/arat-assets-v1` and `datasets/arat-task-instances`
-in this checkout. It does not
-search other checkouts, legacy `custom-assets`, or an external
-AnyDexRetarget repository.
-
-List the activities and their 12 physical layouts:
+## 6. Run the hand bench with the glove
 
 ```bash
-python dex_teleop/scripts/launch_og.py --list-tasks
+python dex_teleop/scripts/launch_hand_bench.py \
+  --hand-source manus --manus-calibration /path/to/right-hand.mcal
 ```
 
-Run one item-level BehaviorTask:
+The fingers follow the glove as soon as the first frame arrives. Keys: `B`
+toggles default/egocentric view, `SPACE` pauses and resumes, `R` reopens the
+hand, Ctrl+C exits. Useful options: `--stale-frame-policy hold` (hold the last
+pose instead of failing on a stale stream), `--finger-target-scale 0.8`
+(shrink flexion), `--retargeter dexpilot` (optional alternative backend,
+`pip install -e './dex_teleop[dexpilot]'`), `--show-arm` (reveal the hidden
+Franka that carries the hand). Wrist options (`--wrist-source`, `--source`,
+VIVE/tracker flags) are rejected on purpose. Quest hand tracking works too:
+`--hand-source quest` listens for the HTS app on UDP 9000.
+
+## 7. Tests
 
 ```bash
-python dex_teleop/scripts/launch_og.py \
-  --task arat_grasp_block_10cm \
-  --source hts \
-  --hand-model sharpa \
-  --auto-anchor \
-  --record-hand-poses \
-  --recording-path outputs/arat_grasp_block_10cm.hdf5
+pytest -q dex_teleop/tests
 ```
 
-The launcher records automatically to
-`dex_teleop/outputs/recordings/<task>.hdf5`. Override that destination with
-`--recording-path` when running a single `--task`. OmniGibson's
-`HDF5CollectionWrapper` records every teleoperated step's action, serialized
-simulator state, reward, and terminated/truncated flags. Pressing `R` flushes
-the current episode before resetting, and exiting normally or with Ctrl+C
-flushes and closes the current recording. A subscale run creates a separate
-default HDF5 file for each activity so every file retains the correct task and
-scene metadata.
+## Troubleshooting
 
-Wrist translation uses `1.5x` sensitivity by default, measured from the pose at
-engagement. Use `--position-sensitivity 1.0` for one-to-one motion, or a larger
-finite positive value if more gain is needed. The gain applies to all three
-translation axes and does not expand the Franka workspace.
+- `Out of GPU memory` during startup: another process holds the VRAM; free
+  about 6 GB.
+- `OMNIGIBSON_DATA_PATH points outside Behavior-1K-arat`: unset that variable;
+  the launchers always use the checkout's `datasets/`.
+- `Missing required hand bench assets`: step 3 is incomplete; the message
+  lists the missing files.
+- `Could not find a matching MANUS SDK header and libManusSDK_Integrated.so`:
+  check the path in 5b or set `MANUS_SDK_ROOT=~/manus_setup/vendor/ManusSDK_v3.1.1`.
+- `MANUS bridge did not publish a validated right-hand articulation within
+  N seconds` (diagnostics or the bench): the SDK and sidecar are fine but no
+  glove data arrived. Power the glove, re-plug the dongle, check the udev rule
+  (5c), and confirm in MANUS Core (Windows) that the dongle carries the SDK
+  license.
 
-The Franka starts in the `extended` reset pose (Deoxys tabletop golden joints).
-Pass `--reset-pose compact` for the OmniGibson `franka.yaml` ready pose.
+## More
 
-Press `T` to show or hide the post-filter commanded-target marker and `E` to
-show or hide the measured EEF marker while teleoperating; no visualization flag
-is required. Each marker combines three pose-oriented wrist circles with red X,
-green Y, and blue Z axes. The commanded circles and origin are magenta; the
-measured circles and origin are cyan. Their connecting line is green below 2 cm
-of position error, amber from 2-5 cm, and red above 5 cm. Pass
-`--visualize-arm-markers` to start both frames visible instead of hidden. The old
-`--visualize-arm-workspace` option remains as an alias, but no workspace geometry
-is generated.
-
-Pass `--record-hand-poses` to add one pre-retargeting human hand sample for
-every recorded action under `human_hand_pose/demo_N`. The canonical
-`wrist_position`, `wrist_quaternion_xyzw`, and `landmarks` datasets use the
-source-independent right-handed world frame; landmarks have shape
-`(steps, 21, 3)` in the `landmark_names` order stored on the group. HTS also
-stores its source-native Unity values in `raw_wrist_position_unity`,
-`raw_wrist_quaternion_xyzw`, and `raw_landmarks_unity`. Timestamps, source frame
-IDs, confidence, and a `raw_available` mask are recorded alongside them. The
-flag is opt-in, so recordings made without it retain the existing layout.
-
-### Synchronized OYMotion EMG
-
-The Synchroni SDK stays an external dependency; it is not copied into this
-repository or imported into the Isaac Sim process. `launch_og.py` starts a
-clean `behavior_dex` Python sidecar that owns Bluetooth and the SDK event
-loops, writes native-rate EMG to a temporary HDF5 file, and sends only a
-bounded waveform preview to Kit over localhost UDP. Install the SDK and its
-dependencies into `behavior_dex`, for example from the adjacent checkout:
-
-```bash
-conda run -n behavior_dex python -m pip install -e ../synchroni-sensor-sdk
-```
-
-Alternatively, install `bleak>=3.0.2` and `flatbuffers>=25.0.0` in that
-environment and pass `--emg-sdk-path ../synchroni-sensor-sdk`. Start one
-single-task recording with:
-
-```bash
-conda run -n behavior_dex python dex_teleop/scripts/launch_og.py \
-  --task arat_grasp_block_10cm \
-  --source hts \
-  --auto-anchor \
-  --emg \
-  --emg-device D8:71:4D:8D:99:92 \
-  --emg-adapter hci0 \
-  --emg-sdk-path ../synchroni-sensor-sdk \
-  --recording-path outputs/arat_grasp_block_10cm_emg.hdf5
-```
-
-If exactly one supported `OY*`, `Sync*`, or `gForce*` device is visible, it is
-selected automatically. Use `--emg-device` with a name substring or Bluetooth
-address when multiple bands are present. On Linux, `--emg-adapter` selects the
-BlueZ adapter; it defaults to `hci0`. This workstation's OYWW1000 is
-`D8:71:4D:8D:99:92` and should use `hci0`. `--emg` also enables hand-pose
-recording. The native `omni.ui.Plot` monitor is docked to the right of the
-left-shoulder viewport in the first row and refreshed at 10 Hz without
-downsampling the saved data. Each channel row shows the latest electrode
-impedance using the SDK
-example's contact colors: green through 500 kΩ, orange through 999 kΩ, and red
-above 999 kΩ. Use `--no-emg-display` to record without the dock. No PyQt or
-Matplotlib GUI is launched.
-
-Dock placement is camera-rig-specific. With the default `arat_default` rig,
-the EMG monitor is added to the
-lower `Content` / `Console` tab stack, so it can be selected by clicking its
-`OYMotion EMG` tab. The legacy `arat_sharpa_v1` rig retains the placement
-described above the left-shoulder viewport.
-
-The launcher explicitly configures and verifies every firmware filter before
-starting notifications. Its default is the 0.5 Hz HPF on, 80 Hz LPF on, 60 Hz
-notch on, and 50 Hz notch off. Use `--no-emg-hpf`, `--no-emg-lpf`, or
-`--emg-notch {off,50,60,both}` to select a different reproducible policy. The
-verified aggregate state is printed at startup and stored as
-`/emg.attrs['filter_configuration']`; acquisition fails instead of silently
-continuing if the wristband reports a different state.
-
-Pass `--display decoder` (or the existing `--visualize-decoder` spelling) to
-load the sibling `emg2pose` checkout and its
-`checkpoints/regression_vemg2pose.ckpt`, decode the same EMG samples being
-recorded, and render the UmeTrack hand mesh. In the mobile-manipulator rig,
-`EMG2Pose Hand` is another clickable tab in the lower `Content` / `Console`
-stack; the existing rig retains its prior placement below the waveform monitor.
-The model needs about 5.9 seconds of source history before its first pose.
-Inference runs in the EMG sidecar, so it does not create a second BLE
-connection. Override the defaults with `--emg2pose-root`,
-`--emg2pose-checkpoint`, or `--emg2pose-device cpu` as needed. Decoding targets
-5 Hz by default. `--emg2pose-inference-hz 10` is a conservative faster setting
-on CUDA; the 32-sample, 500 Hz wristband callbacks cap meaningful fresh-window
-updates at about 15.6 Hz. The decoded mesh is a live diagnostic; the lossless
-native EMG remains the recorded source of truth.
-
-The combined recording contains:
-
-- `/data/demo_N/action`: the exact command passed to `env.step` by the existing
-  OmniGibson wrapper.
-- `/human_hand_pose/demo_N`: the Quest pose selected for each action, including
-  integer `timestamp_monotonic_ns` and `receipt_monotonic_ns` values.
-- `/action_timing/demo_N`: desktop monotonic timestamps immediately before and
-  after each `env.step`, plus simulator time before and after the step.
-- `/emg/samples`: converted microvolt values, raw ADC values, SDK sample index
-  and timestamp, loss flags, and an estimated desktop monotonic timestamp at
-  the wristband's native sample rate. `/emg/batches` preserves callback receive
-  time and per-channel diagnostics.
-- `/synchronization/demo_N`: half-open EMG row ranges for the episode and for
-  every action row.
-
-Linux `time.monotonic_ns` is shared across the launcher and sidecar processes.
-The Synchroni SDK timestamp is device-stream-relative rather than a desktop
-epoch, so the recorder maps SDK sample indices at the advertised sample rate
-to the callback having the smallest observed receive delay. It retains the raw
-SDK and callback timestamps so a different clock model can be fit offline.
-This is host-clock synchronization and includes unknown Bluetooth transport
-latency; it is not hardware-trigger or PTP synchronization.
-
-Each action also records an evaluation trace under `evaluation/demo_N/steps`.
-The trace expands every BDDL goal condition into its natural-language text and
-satisfaction state, and stores the full ARAT snapshot, provisional score,
-decision reasons, scoring-rule conditions, hand contacts, apertures, object and
-target evidence, hold quality, release state, water state, and milestone event
-history. The ARAT portion is marked disabled when teleoperation uses
-`--no-score`.
-
-Ctrl+C is handled as a graceful stop request: the active simulator operation
-finishes, the HDF5 trajectory is closed, and only then does OmniGibson shut
-down. Collection writes to a hidden same-directory staging file and atomically
-replaces the requested `.hdf5` only after a successful close. A crash therefore
-cannot truncate a previously completed recording at the final output path.
-
-During teleoperation, the large left-shoulder view also displays each BDDL goal
-condition. Unsatisfied conditions are red and satisfied conditions are green;
-the terminal prints the satisfied-condition count whenever it changes.
-
-Replay a recording and render the recorded simulator states from the left
-shoulder, right shoulder, thumb-side wrist, and pinky-side wrist cameras into
-one MP4:
-
-```bash
-python dex_teleop/scripts/replay_data.py \
-  dex_teleop/outputs/recordings/arat_grasp_block_10cm.hdf5 \
-  --headless \
-  --evaluation-overlay
-```
-
-When `--episode-id` is omitted, the script lists all saved episodes and prompts
-for the episode ID before launching OmniGibson. The video is written next to
-the recording as `<recording>_demo_<episode>.mp4`. Use `--episode-id` for a
-non-interactive selection, `--list-episodes` to only inspect the recording, or
-`--output` to override the MP4 path. The replay script infers and validates the
-ARAT task from the HDF5 metadata; an optional `--task` can assert the expected
-activity.
-
-`--evaluation-overlay` adds a per-frame dashboard below the four cameras. It
-shows every BDDL predicate as PASS/FAIL and explains the provisional ARAT score
-with each applicable scoring gate, its threshold and measured evidence, current
-contacts and hold/release state, and milestone events. `--log-eval` is retained
-as a shorter alias. Recordings created before evaluation traces were introduced
-must be recorded again to use this overlay.
-
-Conditions that do not apply to the selected task are omitted, while the set of
-rows for that task remains fixed throughout the video. Rows are separated by
-`SCORE 1`, `SCORE 2`, and `SCORE 3` headers. A white `WAIT` therefore means that
-an applicable condition cannot be decided yet, such as release quality before
-a release has occurred.
-The evaluation dashboard retains its original 600-pixel height and uses text
-scaled to 1.5 times the initial size; the four camera images retain their
-original resolution. Individual BDDL goal rows use the same regular-weight
-body font as the ARAT calculation rows.
-
-The default launcher uses the chest camera as its large main view, with the
-left- and right-shoulder cameras docked on their corresponding sides. The
-thumb- and pinky-side cameras are rigidly mounted to the Sharpa palm base and
-stacked below the right-shoulder view. They converge toward the fingertips and
-nearby manipulation workspace. Press `B` to toggle the main viewport between
-the chest and overview cameras. The legacy `arat_sharpa_v1` rig remains
-selectable with `--camera-rig arat_sharpa_v1`.
-
-Camera poses, calibration, viewport docking, panel docking, and toggle cycles
-are defined in packaged YAML files under `src/dex_teleop/arat`. The legacy rig
-remains in `camera_rigs.yaml`; the default mobile-manipulator layout is defined
-in `arat_default.yaml` under the `arat_default` rig ID.
-`arat/tasks.yaml` selects a default `camera_rig`, an individual task may
-override that field, and `--camera-rig` may override it for one launch. A
-camera's `parent.frame` is either `scene` for a fixed world camera or
-`robot_link` with a `link` name for a rigidly mounted camera. Each `teleop` or
-`view_only` layout maps named viewports to cameras and describes auxiliary
-docking. A toggle entry specifies one keyboard `key`, the target `viewport`,
-and the ordered `cameras` to cycle; its first camera must be that viewport's
-initial camera.
-
-Launch the default R1-Pro-style mobile-manipulator layout with:
-
-```bash
-python dex_teleop/scripts/launch_og.py \
-  --task arat_grasp_block_5cm
-```
-
-Its main viewport starts from above the reset hand, centered horizontally on
-the ARAT toolbox and looking downward like a standing operator looking at
-their hands, with the Franka acting as the robot's right arm. Press `B` to
-toggle that viewport to the farther JoyLo-style
-overview and back. The left column contains the left-shoulder view. The right
-column contains the right-shoulder view above the robot-linked thumb- and
-pinky-side wrist cameras. Add `--emg --display decoder` to expose the waveforms
-and decoded hand as clickable tabs in the lower dock.
-
-The `arat_default` workspace uses JoyLo's viewport-only Kit layout: Stage,
-Layer, Property, Render Settings, and the other editor panels are hidden. It
-also uses JoyLo's 1080-square main render, 256-square auxiliary renders,
-left/right dock ratios of 0.25/0.20, with the two wrist views evenly split.
-Viewport
-textures retain those fixed square resolutions, matching JoyLo rather than
-adopting the docked panels' aspect ratios. Rectangular panels therefore show
-black letterboxing around the square views. When `--emg` is active and its
-display is enabled, Content and Console are restored so `OYMotion EMG` and
-`EMG2Pose Hand` can share that lower tab stack.
-
-To inspect a saved task layout without starting HTS, loading a robot, or
-initializing a BehaviorTask, use the camera-only viewer:
-
-```bash
-python dex_teleop/scripts/launch_og.py \
-  --task arat_grasp_block_10cm \
-  --view-only
-```
-
-Because view-only mode intentionally omits the robot, its right-lower viewport
-is empty. The fixed chest view remains in the center with the left- and
-right-shoulder cameras docked beside it. Press `B` to toggle the center
-viewport between chest and overview.
-
-Run every activity in a subscale in the same process, using a fixed number of
-simulation steps per item:
-
-```bash
-python dex_teleop/scripts/launch_og.py \
-  --subscale grasp \
-  --steps-per-task 3600 \
-  --source hts
-```
-
-The launcher forces `OMNIGIBSON_DATA_PATH` to this checkout's `datasets`
-directory and fails if it was explicitly pointed elsewhere. OmniGibson loads
-the task objects from `arat-assets-v1` and composes the robot as `model: franka`
-with `end_effector: sharpa_right` from `omnigibson-robot-assets`, matching the
-established ARAT HTS launcher. Each activity loads
-its own plain `Scene` template, including the grey floor and prior ARAT lighting, and embeds the explicit
-BDDL-instance-to-object-name map before the BehaviorTask is initialized.
-
-All 19 BDDLs carry real completion goals ("object placed at its ARAT target and
-released", expressed with `onshelf` / `ontop` / `pegged` / `filled` /
-`not touching`), and `arat/tasks.yaml` declares `placeholder_goals: false`. On
-top of BDDL completion, the launcher runs the ARAT 0-3 scorer
-(`dex_teleop.arat.eval`) by default during teleoperation:
-
-- Each item runs on a 60 s engaged-time clock (only engaged steps count);
-  completion in under 5 s with the item's appropriate hand-movement components
-  scores 3. Scoring rules follow `ARAT_scoring_guide.md`; only hand-movement
-  components (pad contacts, grasp taxonomy, voluntary opening) gate scores —
-  arm-movement quality is deliberately not evaluated.
-- Milestones (first hold-and-lift, drops, release, fumbles, spills) are printed
-  live and recorded per item to `outputs/arat_results/<timestamp>/<activity>.json`
-  (`--results-dir` overrides the base directory, `--no-score` disables scoring).
-- `--subscale` runs apply the ARAT administration protocol: a 3 on the first
-  item credits the subscale maximum and skips the rest; a 0 on the second item
-  (or on the first gross-movement item) ends the subscale with 0. The session
-  summary is written to `session.json`.
-- Pressing `R` resets the item's scorer along with the scene.
-
-`--source ovxr` is already an explicit source choice, but currently raises a
-clear unavailable-source error. When OVXR hand landmarks work again, implement
-only `tracking/ovxr.py` so it emits the same `HandFrame`; the optimizer and
-Sharpa execution adapter remain unchanged.
-
-## Tests
-
-From the checkout root:
-
-```bash
-conda run -n behavior_dex pytest -q dex_teleop/tests
-```
-
-## Attribution
-
-The landmark preprocessing, optimizer, HTS wire parser, configurations, and
-retargeting URDFs are adaptations of AnyDexRetarget. See
-`THIRD_PARTY_NOTICES.md` and the attribution headers in adapted files.
+The ARAT task launcher (`dex_teleop/scripts/launch_og.py`), recording format,
+replay, Quest/VIVE wrist tracking, MANUS Remote mode, and EMG recording are
+documented in the previous README, kept in `dex_teleop/docs/` (untracked; ask
+Minyeong) and in git history (`git show a8ddd6bfd:dex_teleop/README.md`).

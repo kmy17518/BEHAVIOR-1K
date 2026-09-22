@@ -25,6 +25,7 @@ dexpilot = ["dex-retargeting==0.4.6"]
 dex-teleop-manus-diagnostics = "dex_teleop.tracking.manus_diagnostics:main"
 dex-teleop-calibrate-vive = "dex_teleop.tracking.vive_calibration:main"
 dex-teleop-og = "dex_teleop.omnigibson.launcher:main"
+dex-teleop-hand-bench = "dex_teleop.hand_bench.launcher:main"
 dex-teleop-replay = "dex_teleop.omnigibson.replay:main"
 
 [tool.setuptools]
@@ -39,6 +40,7 @@ where = ["src"]
 dex_teleop = [
   "arat/*.yaml",
   "arat/eval/*.yaml",
+  "hand_bench/*.yaml",
   "native/manus_bridge/*.cpp",
   "native/manus_bridge/*.sh",
   "retargeting/configs/*.yaml",

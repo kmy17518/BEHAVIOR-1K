@@ -1,6 +1,11 @@
 """Hand-tracking source interfaces and implementations."""
 
 from dex_teleop.tracking.base import HandTrackingSource, SourceUnavailableError
+from dex_teleop.tracking.fixed_wrist import (
+    FIXED_WRIST_REFERENCE_FRAME,
+    FIXED_WRIST_SOURCE_NAME,
+    FixedWristSource,
+)
 from dex_teleop.tracking.fusion import ArticulationFrameTransform, HandObservationFuser
 from dex_teleop.tracking.hts import HTSSource
 from dex_teleop.tracking.manus import (
@@ -40,6 +45,9 @@ __all__ = [
     "DrainingHandArticulationSource",
     "DrainingMultimodalHandTrackingSource",
     "DrainingWristPoseSource",
+    "FIXED_WRIST_REFERENCE_FRAME",
+    "FIXED_WRIST_SOURCE_NAME",
+    "FixedWristSource",
     "HandArticulationSource",
     "HandObservationFuser",
     "HandTrackingSampleBatch",

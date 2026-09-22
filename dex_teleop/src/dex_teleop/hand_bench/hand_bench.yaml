@@ -1,0 +1,118 @@
+# Sharpa finger-tracking bench: one right Sharpa hand fixed above a table.
+#
+# The scene is not an ARAT layout. Only the Sharpa hand is visible; the Franka
+# that carries it in the omnigibson-robot-assets model is hidden and held still,
+# so wrist tracking is never consumed and the action space is the 22 finger
+# joints only. World frame: +X points from the operator toward the hand's back,
+# +Y is the operator's left, +Z is up. The hand stands upright 0.14 m over the
+# table centre with its palm facing the operator (-X) and tilted 5 degrees up.
+schema_version: 1
+
+scene:
+  # No skybox: both cameras look downward, so the backdrop behind the table is
+  # the visible ground plane, kept dark grey and lit only by the sphere lights.
+  floor_plane_color: [0.12, 0.12, 0.12]
+  table:
+    dataset_name: arat-assets-v1
+    category: desk
+    model: arat_standard_table
+    # Plain 0.49 x 0.76 x 0.75 m wooden table (a generic asset from the local
+    # dataset, not an ARAT layout); 0.49 m deep along X, 0.76 m wide along Y,
+    # so both cameras see its far edge and corners. The base link
+    # is authored at the bounding-box bottom, so this root pose rests it on the
+    # floor plane with the tabletop at tabletop_height; the launcher asserts
+    # that height at load time.
+    position: [0.0, 0.0, 0.0]
+    orientation_xyzw: [0.0, 0.0, 0.0, 1.0]
+    tabletop_height: 0.75
+    height_tolerance_m: 0.01
+  lights:
+    # Key above the operator's left shoulder, fill above the dorsal side, and a
+    # low front fill so the palm is not lost in shadow. All three sit behind
+    # and above the two cameras so no light sphere enters either frame.
+    - name: hand_bench_key_light
+      light_type: Sphere
+      radius: 0.15
+      intensity: 220000.0
+      position: [-1.6, 0.9, 2.6]
+    - name: hand_bench_fill_light
+      light_type: Sphere
+      radius: 0.15
+      intensity: 130000.0
+      position: [1.6, -0.9, 2.5]
+    - name: hand_bench_front_light
+      light_type: Sphere
+      radius: 0.15
+      intensity: 60000.0
+      position: [-1.5, -0.8, 1.4]
+  robot:
+    # Franka + right Sharpa (franka.yaml end_effector sharpa_right). The root
+    # link panda_base stands on the floor behind the table at yaw 150 degrees so
+    # the hidden arm reaches the hand from behind its back. arm_joint_positions
+    # were solved offline (Pinocchio IK on the franka_sharpa_right URDF) for the
+    # hand pose below and stay >= 0.51 rad from every Franka joint limit; the
+    # nearest hidden link (panda_link7, z = 0.853) is 0.10 m above the tabletop.
+    position: [0.606218, -0.35, 0.0]
+    orientation_xyzw: [0.0, 0.0, 0.96592583, 0.25881905]
+    arm_joint_positions: [-0.256918, 1.250068, 0.255078, -1.364359, 2.338319, 2.036946, -2.163023]
+    # Prefixes of robot links, or of child prims under a link (the ARAT wrist
+    # camera pods are Xforms under right_hand_C_MC), whose visuals the bench
+    # hides at load time. Every right_hand_* / finger link stays visible.
+    hidden_prim_prefixes: [panda_, right_wrist_camera_]
+    expected_hand_pose:
+      # right_hand_C_MC: +X palm normal, +Y pinky->thumb, +Z wrist->fingertips.
+      # Palm normal (-0.996, 0, 0.087), thumb toward -Y, fingers up.
+      link: right_hand_C_MC
+      position: [0.0, 0.0, 0.8912]
+      orientation_xyzw: [0.04361939, 0.0, 0.99904822, 0.0]
+      position_tolerance_m: 0.01
+      orientation_tolerance_deg: 2.0
+
+camera_rigs:
+  hand_bench:
+    sensor_defaults:
+      modalities: []
+      include_in_obs: false
+      calibration:
+        # JoyLo's square main render; a 28 mm focal length (41-degree field of
+        # view) keeps the hand about a third of the frame with table context.
+        image_width: 1080
+        image_height: 1080
+        horizontal_aperture: 20.955
+        focal_length: 28.0
+
+    cameras:
+      dorsal:
+        sensor_name: hand_bench_dorsal_camera
+        prim_name: hand_bench_dorsal_camera
+        parent: {frame: scene}
+        pose:
+          # Default view: behind the back of the hand (+X), 29 degrees above the
+          # palm centre, looking at [0, 0, 0.98].
+          position: [0.72, 0.0, 1.38]
+          orientation_xyzw: [0.3585934567, 0.3585934567, 0.609434765, 0.609434765]
+
+      palmar:
+        sensor_name: hand_bench_palmar_camera
+        prim_name: hand_bench_palmar_camera
+        parent: {frame: scene}
+        pose:
+          # Egocentric view: on the operator's side (-X), mirrored from the
+          # dorsal camera, looking at the palm from 29 degrees above.
+          position: [-0.72, 0.0, 1.38]
+          orientation_xyzw: [-0.3585934567, 0.3585934567, 0.609434765, -0.609434765]
+
+    layouts:
+      teleop:
+        workspace:
+          viewport_only: true
+          fill_viewports: false
+        viewports:
+          main:
+            main: true
+            camera: dorsal
+        toggles:
+          # Same key JoyLo and the ARAT launcher use to cycle the main viewport.
+          - key: B
+            viewport: main
+            cameras: [dorsal, palmar]
