@@ -1,0 +1,136 @@
+<?xml version="1.0" ?>
+<robot name="cup_red">
+  <link name="base_link">
+    <inertial>
+      <origin xyz="0 0 0.06" rpy="0 0 0"/>
+      <mass value="0.1254"/>
+      <inertia ixx="0.00020926125" ixy="0" ixz="0" iyy="0.00020926125" iyz="0" izz="0.0001175625"/>
+    </inertial>
+    <visual name="visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/visual.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="floor">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/floor.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="wall_00">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wall_00.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="wall_01">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wall_01.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="wall_02">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wall_02.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="wall_03">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wall_03.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="wall_04">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wall_04.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="wall_05">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wall_05.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="wall_06">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wall_06.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="wall_07">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wall_07.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="wall_08">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wall_08.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="wall_09">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wall_09.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="wall_10">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wall_10.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="wall_11">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wall_11.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="wall_12">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wall_12.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="wall_13">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wall_13.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="wall_14">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wall_14.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="wall_15">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wall_15.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="meta__base_link_fillable_0_0_link">
+    <inertial>
+      <origin xyz="0 0 0.05725" rpy="0 0 0"/>
+      <mass value="0.0001"/>
+      <inertia ixx="1e-8" ixy="0" ixz="0" iyy="1e-8" iyz="0" izz="1e-8"/>
+    </inertial>
+    <visual name="fillable_volume">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/fillable_volume.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+  </link>
+  <joint name="base_link_to_fillable" type="fixed">
+    <parent link="base_link"/>
+    <child link="meta__base_link_fillable_0_0_link"/>
+    <origin xyz="0 0 0.0045" rpy="0 0 0"/>
+  </joint>
+</robot>

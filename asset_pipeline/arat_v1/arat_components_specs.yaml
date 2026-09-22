@@ -1,0 +1,259 @@
+project:
+  name: Standardized ARAT apparatus
+  version: 1
+  authority: ARAT_specification.md
+  runtime_linear_unit: metre
+  coordinate_convention: centered in X and Y, bottom at Z=0
+
+conversion:
+  inch_to_metre: 0.0254
+  centimetre_to_metre: 0.01
+  millimetre_to_metre: 0.001
+
+materials:
+  light_maple_wood:
+    texture_source: components/textures/wood_basecolor.png
+    description: light finished pine / maple appearance
+  brushed_tin:
+    base_color_rgba: [0.48, 0.52, 0.56, 1.0]
+    metallic: 0.9
+    roughness: 0.28
+  crimson_red:
+    base_color_rgba: [0.55, 0.015, 0.025, 1.0]
+    metallic: 0.0
+    roughness: 0.32
+  dark_steel:
+    description: dark gunmetal used for the small transfer objects so they contrast with the brushed-tin lids
+    base_color_rgba: [0.045, 0.055, 0.07, 1.0]
+    metallic: 0.9
+    roughness: 0.32
+  sharpening_stone:
+    base_color_rgba: [0.16, 0.065, 0.025, 1.0]
+    metallic: 0.0
+    roughness: 0.88
+  turquoise_marble:
+    base_color_rgba: [0.025, 0.52, 0.50, 1.0]
+    metallic: 0.0
+    roughness: 0.16
+  cup_blue:
+    base_color_rgba: [0.08, 0.28, 0.62, 1.0]
+    metallic: 0.0
+    roughness: 0.32
+  cup_red:
+    base_color_rgba: [0.62, 0.08, 0.06, 1.0]
+    metallic: 0.0
+    roughness: 0.32
+
+assumptions:
+  # The manual specifies neither these material thicknesses nor masses. They
+  # affect manufacturability / simulation only, not any standardized measure.
+  tin_wall_thickness_cm: 0.08
+  tin_floor_thickness_cm: 0.08
+  small_tube_wall_thickness_cm: 0.03
+  large_tube_wall_thickness_cm: 0.05
+  washer_thickness_cm: 0.3175
+  cup_upper_diameter_cm: 7.5
+  cup_lower_diameter_cm: 6.2
+  cup_height_cm: 12.0
+  cup_wall_thickness_cm: 0.3
+  cup_base_thickness_cm: 0.4
+  wood_density_kg_m3: 500.0
+  tabletop_thickness_cm: 4.0
+  table_leg_square_cm: 4.0
+  fixture_peg_lateral_offsets_cm: [-2.0, 2.0]
+
+assets:
+  wooden_blocks:
+    category: arat_wooden_block
+    material: light_maple_wood
+    unit: centimetre
+    collision: one convex box per model
+    models:
+      - {model: wooden_block_10, edge: 10.0, mass_grams: 492.0}
+      - {model: wooden_block_7_5, edge: 7.5, mass_grams: 196.0}
+      - {model: wooden_block_5_0, edge: 5.0, mass_grams: 55.0}
+      - {model: wooden_block_2_5, edge: 2.5, mass_grams: 6.5}
+
+  cricket_ball:
+    category: arat_cricket_ball
+    model: cricket_ball
+    material: crimson_red
+    unit: centimetre
+    diameter: 7.1
+    mass_grams: 159.0
+    collision: one convex icosphere
+
+  tin_lid:
+    category: arat_tin
+    model: tin_lid
+    material: brushed_tin
+    unit: centimetre
+    outside_diameter: 9.0
+    rim_height: 1.0
+    wall_thickness: 0.08
+    floor_thickness: 0.08
+    inside_diameter: 8.84
+    inside_depth: 0.92
+    collision_segments: 16
+    collision: open compound collider with floor plus sixteen rim wedges
+
+  sharpening_stone:
+    category: arat_sharpening_stone
+    model: sharpening_stone
+    material: sharpening_stone
+    unit: centimetre
+    dimensions_xyz: [10.0, 2.5, 1.0]
+    mass_grams: 60.3
+    collision: one convex bevelled box
+
+  marble:
+    category: arat_marble
+    model: marble
+    material: turquoise_marble
+    unit: centimetre
+    diameter: 1.6
+    mass_grams: 5.4
+    collision: one convex icosphere
+
+  ball_bearing:
+    category: arat_ball_bearing
+    model: ball_bearing
+    material: dark_steel
+    unit: millimetre
+    diameter: 6.0
+    mass_grams: 1.1
+    collision: one convex icosphere
+
+  alloy_tubes:
+    category: arat_alloy_tube
+    material: brushed_tin
+    unit: centimetre
+    open_ends: both
+    collision_segments: 16
+    collision: compound convex annular wall wedges per model
+    models:
+      - model: small_alloy_tube
+        outside_diameter: 1.0
+        inside_diameter: 0.94
+        wall_thickness: 0.03
+        height: 16.0
+        mass_grams: 14.2
+        peg_diameter: 0.8
+        collision_axial_segments: 2
+      - model: large_alloy_tube
+        outside_diameter: 2.5
+        inside_diameter: 2.4
+        wall_thickness: 0.05
+        height: 11.5
+        mass_grams: 38.5
+        peg_diameter: 2.0
+        collision_axial_segments: 1
+
+  tube_starting_fixture:
+    category: arat_tube_planks_and_pegs
+    model: tube_starting_fixture
+    unit: centimetre
+    # Depth reduced to 6 cm so a centered bolt 8 cm behind table edge A
+    # leaves the plank front flush with the ARAT-box lid 5 cm behind A.
+    plank_dimensions_xyz: [6.0, 8.5, 1.5]
+    pegs:
+      - {id: large, diameter: 2.0, height: 13.5, x: -2.0, y: 0.0}
+      - {id: small, diameter: 0.8, height: 6.0, x: 2.0, y: 0.0}
+
+  tube_target_fixture:
+    category: arat_tube_planks_and_pegs
+    model: tube_target_fixture
+    unit: centimetre
+    # Local X is across the table; local Y is perpendicular to the proximal edge.
+    plank_dimensions_xyz: [8.5, 34.0, 3.5]
+    pegs:
+      - {id: large, diameter: 2.0, height: 8.0, x: -2.0, y: 6.0}
+      - {id: small, diameter: 0.8, height: 6.0, x: 2.0, y: 6.0}
+
+  washer_target_fixture:
+    category: arat_tube_planks_and_pegs
+    model: washer_target_fixture
+    unit: centimetre
+    plank_dimensions_xyz: [8.5, 8.5, 1.5]
+    pegs:
+      - {id: washer, diameter: 0.8, height: 8.5, x: 0.0, y: 0.0}
+
+  # Independently placeable versions of the standardized fixture members.
+  # The original compound fixtures remain for compatibility, but ARAT task
+  # instances use these models so each fixed-on relationship is explicit.
+  fixture_components:
+    plank_category: arat_plank
+    bolt_category: arat_bolt
+    unit: centimetre
+    planks:
+      - {model: plank_starting_point, dimensions_xyz: [6.0, 8.5, 1.5]}
+      - {model: plank_target_point, dimensions_xyz: [8.5, 34.0, 3.5]}
+      - {model: plank_washer_target_point, dimensions_xyz: [8.5, 8.5, 1.5]}
+    bolts:
+      - {model: bolt_large_starting_point, diameter: 2.0, height: 13.5}
+      - {model: bolt_large_target_point, diameter: 2.0, height: 8.0}
+      - {model: bolt_small_starting_point, diameter: 0.8, height: 6.0}
+      - {model: bolt_small_target_point, diameter: 0.8, height: 6.0}
+      - {model: bolt_washer_target_point, diameter: 0.8, height: 8.5}
+
+  washer:
+    category: arat_washer
+    model: washer
+    material: dark_steel
+    unit: centimetre
+    outside_diameter: 3.5
+    inside_diameter: 1.5
+    thickness: 0.3175
+    mass_grams: 16.0
+    collision_segments: 16
+
+  cups:
+    category: arat_cup
+    unit: centimetre
+    mass_grams: 125.4
+    collision_segments: 16
+    dimensions:
+      upper_outside_diameter: 7.5
+      lower_outside_diameter: 6.2
+      height: 12.0
+      wall_thickness: 0.3
+      base_thickness: 0.4
+      upper_inside_diameter: 6.9
+      lower_inside_diameter: 5.6
+      inside_depth: 11.6
+    fillable:
+      enabled: true
+      volume_diameter: 5.4
+      z_min: 0.45
+      z_max: 11.9
+      volume_height: 11.45
+    models:
+      - {model: cup_blue, material: cup_blue}
+      - {model: cup_red, material: cup_red}
+
+  table:
+    category: desk
+    model: arat_standard_table
+    unit: centimetre
+    # Model axes follow runtime world: X depth, Y width, Z up.
+    overall_dimensions_xyz: [49.0, 76.0, 75.0]
+    top_dimensions_xyz: [49.0, 76.0, 4.0]
+    top_bottom_z: 71.0
+    leg_dimensions_xyz: [4.0, 4.0, 71.0]
+    leg_centers_xy:
+      - [-20.5, -34.0]
+      - [-20.5, 34.0]
+      - [20.5, -34.0]
+      - [20.5, 34.0]
+
+  shelf:
+    category: shelf
+    model: arat_standard_shelf
+    unit: centimetre
+    construction: purpose_built_open_stand
+    # This intentionally is not the optional toolbox. Runtime world X is
+    # table depth and Y is table width; the top is the manual's 23 x 46 cm.
+    support_frame_dimensions_xyz: [23.0, 46.0, 34.0]
+    top_plank_dimensions_xyz: [23.0, 46.0, 3.0]
+    post_square: 3.0
+    overall_height: 37.0

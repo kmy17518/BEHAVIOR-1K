@@ -1,0 +1,279 @@
+{
+  "status": "passed",
+  "asset_version": 1,
+  "authority": "ARAT_specification.md",
+  "asset_count": 27,
+  "collision_mesh_count": 149,
+  "assets": {
+    "wooden_block_10": {
+      "category": "arat_wooden_block",
+      "bbox_metres": [
+        0.1,
+        0.1,
+        0.1
+      ],
+      "mass_kg": 0.492,
+      "collision_mesh_count": 1
+    },
+    "wooden_block_7_5": {
+      "category": "arat_wooden_block",
+      "bbox_metres": [
+        0.075,
+        0.075,
+        0.075
+      ],
+      "mass_kg": 0.196,
+      "collision_mesh_count": 1
+    },
+    "wooden_block_5_0": {
+      "category": "arat_wooden_block",
+      "bbox_metres": [
+        0.05,
+        0.05,
+        0.05
+      ],
+      "mass_kg": 0.055,
+      "collision_mesh_count": 1
+    },
+    "wooden_block_2_5": {
+      "category": "arat_wooden_block",
+      "bbox_metres": [
+        0.025,
+        0.025,
+        0.025
+      ],
+      "mass_kg": 0.0065,
+      "collision_mesh_count": 1
+    },
+    "cricket_ball": {
+      "category": "arat_cricket_ball",
+      "bbox_metres": [
+        0.071,
+        0.071,
+        0.071
+      ],
+      "mass_kg": 0.159,
+      "collision_mesh_count": 1
+    },
+    "tin_lid": {
+      "category": "arat_tin",
+      "bbox_metres": [
+        0.09,
+        0.09,
+        0.01
+      ],
+      "mass_kg": 0.056142206,
+      "collision_mesh_count": 17
+    },
+    "sharpening_stone": {
+      "category": "arat_sharpening_stone",
+      "bbox_metres": [
+        0.1,
+        0.025,
+        0.01
+      ],
+      "mass_kg": 0.0603,
+      "collision_mesh_count": 1
+    },
+    "marble": {
+      "category": "arat_marble",
+      "bbox_metres": [
+        0.016,
+        0.016,
+        0.016
+      ],
+      "mass_kg": 0.0054,
+      "collision_mesh_count": 1
+    },
+    "ball_bearing": {
+      "category": "arat_ball_bearing",
+      "bbox_metres": [
+        0.006,
+        0.006,
+        0.006
+      ],
+      "mass_kg": 0.0011,
+      "collision_mesh_count": 1
+    },
+    "tube_starting_fixture": {
+      "category": "arat_tube_planks_and_pegs",
+      "bbox_metres": [
+        0.06,
+        0.085,
+        0.15000000000000002
+      ],
+      "mass_kg": 0.0609637149,
+      "collision_mesh_count": 3
+    },
+    "tube_target_fixture": {
+      "category": "arat_tube_planks_and_pegs",
+      "bbox_metres": [
+        0.085,
+        0.34,
+        0.115
+      ],
+      "mass_kg": 0.519824335,
+      "collision_mesh_count": 3
+    },
+    "washer_target_fixture": {
+      "category": "arat_tube_planks_and_pegs",
+      "bbox_metres": [
+        0.085,
+        0.085,
+        0.1
+      ],
+      "mass_kg": 0.056323783,
+      "collision_mesh_count": 2
+    },
+    "plank_starting_point": {
+      "category": "arat_plank",
+      "bbox_metres": [
+        0.06,
+        0.085,
+        0.015
+      ],
+      "mass_kg": 0.03825,
+      "collision_mesh_count": 1
+    },
+    "plank_target_point": {
+      "category": "arat_plank",
+      "bbox_metres": [
+        0.085,
+        0.34,
+        0.035
+      ],
+      "mass_kg": 0.50575,
+      "collision_mesh_count": 1
+    },
+    "plank_washer_target_point": {
+      "category": "arat_plank",
+      "bbox_metres": [
+        0.085,
+        0.085,
+        0.015
+      ],
+      "mass_kg": 0.0541875,
+      "collision_mesh_count": 1
+    },
+    "bolt_large_starting_point": {
+      "category": "arat_bolt",
+      "bbox_metres": [
+        0.02,
+        0.02,
+        0.135
+      ],
+      "mass_kg": 0.0212057504,
+      "collision_mesh_count": 1
+    },
+    "bolt_large_target_point": {
+      "category": "arat_bolt",
+      "bbox_metres": [
+        0.02,
+        0.02,
+        0.08
+      ],
+      "mass_kg": 0.0125663706,
+      "collision_mesh_count": 1
+    },
+    "bolt_small_starting_point": {
+      "category": "arat_bolt",
+      "bbox_metres": [
+        0.008,
+        0.008,
+        0.06
+      ],
+      "mass_kg": 0.00150796447,
+      "collision_mesh_count": 1
+    },
+    "bolt_small_target_point": {
+      "category": "arat_bolt",
+      "bbox_metres": [
+        0.008,
+        0.008,
+        0.06
+      ],
+      "mass_kg": 0.00150796447,
+      "collision_mesh_count": 1
+    },
+    "bolt_washer_target_point": {
+      "category": "arat_bolt",
+      "bbox_metres": [
+        0.008,
+        0.008,
+        0.085
+      ],
+      "mass_kg": 0.002136283,
+      "collision_mesh_count": 1
+    },
+    "washer": {
+      "category": "arat_washer",
+      "bbox_metres": [
+        0.035,
+        0.035,
+        0.0031750000000000003
+      ],
+      "mass_kg": 0.016,
+      "collision_mesh_count": 16
+    },
+    "cup_blue": {
+      "category": "arat_cup",
+      "bbox_metres": [
+        0.075,
+        0.075,
+        0.12
+      ],
+      "mass_kg": 0.1254,
+      "collision_mesh_count": 17
+    },
+    "cup_red": {
+      "category": "arat_cup",
+      "bbox_metres": [
+        0.075,
+        0.075,
+        0.12
+      ],
+      "mass_kg": 0.1254,
+      "collision_mesh_count": 17
+    },
+    "small_alloy_tube": {
+      "category": "arat_alloy_tube",
+      "bbox_metres": [
+        0.01,
+        0.01,
+        0.16
+      ],
+      "mass_kg": 0.0142,
+      "collision_mesh_count": 32
+    },
+    "large_alloy_tube": {
+      "category": "arat_alloy_tube",
+      "bbox_metres": [
+        0.025,
+        0.025,
+        0.115
+      ],
+      "mass_kg": 0.0385,
+      "collision_mesh_count": 16
+    },
+    "arat_standard_table": {
+      "category": "desk",
+      "bbox_metres": [
+        0.49,
+        0.76,
+        0.75
+      ],
+      "mass_kg": 9.72,
+      "collision_mesh_count": 5
+    },
+    "arat_standard_shelf": {
+      "category": "shelf",
+      "bbox_metres": [
+        0.23,
+        0.46,
+        0.37
+      ],
+      "mass_kg": 2.199,
+      "collision_mesh_count": 5
+    }
+  }
+}

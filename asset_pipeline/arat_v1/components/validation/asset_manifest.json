@@ -1,0 +1,603 @@
+{
+  "status": "generated",
+  "asset_count": 27,
+  "source_specs": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/arat_components_specs.yaml",
+  "source_units": [
+    "centimetre",
+    "millimetre"
+  ],
+  "runtime_unit": "metre",
+  "assets": [
+    {
+      "category": "arat_wooden_block",
+      "model": "wooden_block_10",
+      "source_unit": "centimetre",
+      "bbox_metres": [
+        0.1,
+        0.1,
+        0.1
+      ],
+      "mass_kg": 0.492,
+      "visual_object_count": 1,
+      "collision_mesh_count": 1,
+      "collision_names": [
+        "box"
+      ],
+      "urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/wooden_block_10/wooden_block_10.urdf"
+    },
+    {
+      "category": "arat_wooden_block",
+      "model": "wooden_block_7_5",
+      "source_unit": "centimetre",
+      "bbox_metres": [
+        0.075,
+        0.075,
+        0.075
+      ],
+      "mass_kg": 0.196,
+      "visual_object_count": 1,
+      "collision_mesh_count": 1,
+      "collision_names": [
+        "box"
+      ],
+      "urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/wooden_block_7_5/wooden_block_7_5.urdf"
+    },
+    {
+      "category": "arat_wooden_block",
+      "model": "wooden_block_5_0",
+      "source_unit": "centimetre",
+      "bbox_metres": [
+        0.05,
+        0.05,
+        0.05
+      ],
+      "mass_kg": 0.055,
+      "visual_object_count": 1,
+      "collision_mesh_count": 1,
+      "collision_names": [
+        "box"
+      ],
+      "urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/wooden_block_5_0/wooden_block_5_0.urdf"
+    },
+    {
+      "category": "arat_wooden_block",
+      "model": "wooden_block_2_5",
+      "source_unit": "centimetre",
+      "bbox_metres": [
+        0.025,
+        0.025,
+        0.025
+      ],
+      "mass_kg": 0.0065,
+      "visual_object_count": 1,
+      "collision_mesh_count": 1,
+      "collision_names": [
+        "box"
+      ],
+      "urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/wooden_block_2_5/wooden_block_2_5.urdf"
+    },
+    {
+      "category": "arat_cricket_ball",
+      "model": "cricket_ball",
+      "source_unit": "centimetre",
+      "bbox_metres": [
+        0.071,
+        0.071,
+        0.071
+      ],
+      "mass_kg": 0.159,
+      "visual_object_count": 1,
+      "collision_mesh_count": 1,
+      "collision_names": [
+        "sphere"
+      ],
+      "urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/cricket_ball/cricket_ball.urdf"
+    },
+    {
+      "category": "arat_tin",
+      "model": "tin_lid",
+      "source_unit": "centimetre",
+      "bbox_metres": [
+        0.09,
+        0.09,
+        0.01
+      ],
+      "mass_kg": 0.05614220599382059,
+      "visual_object_count": 1,
+      "collision_mesh_count": 17,
+      "collision_names": [
+        "floor",
+        "wall_00",
+        "wall_01",
+        "wall_02",
+        "wall_03",
+        "wall_04",
+        "wall_05",
+        "wall_06",
+        "wall_07",
+        "wall_08",
+        "wall_09",
+        "wall_10",
+        "wall_11",
+        "wall_12",
+        "wall_13",
+        "wall_14",
+        "wall_15"
+      ],
+      "urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/tin_lid/tin_lid.urdf"
+    },
+    {
+      "category": "arat_sharpening_stone",
+      "model": "sharpening_stone",
+      "source_unit": "centimetre",
+      "bbox_metres": [
+        0.1,
+        0.025,
+        0.01
+      ],
+      "mass_kg": 0.0603,
+      "visual_object_count": 1,
+      "collision_mesh_count": 1,
+      "collision_names": [
+        "stone"
+      ],
+      "urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/sharpening_stone/sharpening_stone.urdf"
+    },
+    {
+      "category": "arat_marble",
+      "model": "marble",
+      "source_unit": "centimetre",
+      "bbox_metres": [
+        0.016,
+        0.016,
+        0.016
+      ],
+      "mass_kg": 0.0054,
+      "visual_object_count": 1,
+      "collision_mesh_count": 1,
+      "collision_names": [
+        "sphere"
+      ],
+      "urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/marble/marble.urdf"
+    },
+    {
+      "category": "arat_ball_bearing",
+      "model": "ball_bearing",
+      "source_unit": "millimetre",
+      "bbox_metres": [
+        0.006,
+        0.006,
+        0.006
+      ],
+      "mass_kg": 0.0011,
+      "visual_object_count": 1,
+      "collision_mesh_count": 1,
+      "collision_names": [
+        "sphere"
+      ],
+      "urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/ball_bearing/ball_bearing.urdf"
+    },
+    {
+      "category": "arat_tube_planks_and_pegs",
+      "model": "tube_starting_fixture",
+      "source_unit": "centimetre",
+      "bbox_metres": [
+        0.06,
+        0.085,
+        0.15000000000000002
+      ],
+      "mass_kg": 0.060963714885454205,
+      "visual_object_count": 3,
+      "collision_mesh_count": 3,
+      "collision_names": [
+        "plank",
+        "large_peg",
+        "small_peg"
+      ],
+      "urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/tube_starting_fixture/tube_starting_fixture.urdf"
+    },
+    {
+      "category": "arat_tube_planks_and_pegs",
+      "model": "tube_target_fixture",
+      "source_unit": "centimetre",
+      "bbox_metres": [
+        0.085,
+        0.34,
+        0.115
+      ],
+      "mass_kg": 0.5198243350880825,
+      "visual_object_count": 3,
+      "collision_mesh_count": 3,
+      "collision_names": [
+        "plank",
+        "large_peg",
+        "small_peg"
+      ],
+      "urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/tube_target_fixture/tube_target_fixture.urdf"
+    },
+    {
+      "category": "arat_tube_planks_and_pegs",
+      "model": "washer_target_fixture",
+      "source_unit": "centimetre",
+      "bbox_metres": [
+        0.085,
+        0.085,
+        0.1
+      ],
+      "mass_kg": 0.05632378300444107,
+      "visual_object_count": 2,
+      "collision_mesh_count": 2,
+      "collision_names": [
+        "plank",
+        "washer_peg"
+      ],
+      "urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/washer_target_fixture/washer_target_fixture.urdf"
+    },
+    {
+      "category": "arat_plank",
+      "model": "plank_starting_point",
+      "source_unit": "centimetre",
+      "bbox_metres": [
+        0.06,
+        0.085,
+        0.015
+      ],
+      "mass_kg": 0.03825,
+      "visual_object_count": 1,
+      "collision_mesh_count": 1,
+      "collision_names": [
+        "plank"
+      ],
+      "urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/plank_starting_point/plank_starting_point.urdf"
+    },
+    {
+      "category": "arat_plank",
+      "model": "plank_target_point",
+      "source_unit": "centimetre",
+      "bbox_metres": [
+        0.085,
+        0.34,
+        0.035
+      ],
+      "mass_kg": 0.5057500000000001,
+      "visual_object_count": 1,
+      "collision_mesh_count": 1,
+      "collision_names": [
+        "plank"
+      ],
+      "urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/plank_target_point/plank_target_point.urdf"
+    },
+    {
+      "category": "arat_plank",
+      "model": "plank_washer_target_point",
+      "source_unit": "centimetre",
+      "bbox_metres": [
+        0.085,
+        0.085,
+        0.015
+      ],
+      "mass_kg": 0.054187500000000006,
+      "visual_object_count": 1,
+      "collision_mesh_count": 1,
+      "collision_names": [
+        "plank"
+      ],
+      "urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/plank_washer_target_point/plank_washer_target_point.urdf"
+    },
+    {
+      "category": "arat_bolt",
+      "model": "bolt_large_starting_point",
+      "source_unit": "centimetre",
+      "bbox_metres": [
+        0.02,
+        0.02,
+        0.135
+      ],
+      "mass_kg": 0.021205750411731106,
+      "visual_object_count": 1,
+      "collision_mesh_count": 1,
+      "collision_names": [
+        "bolt"
+      ],
+      "urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/bolt_large_starting_point/bolt_large_starting_point.urdf"
+    },
+    {
+      "category": "arat_bolt",
+      "model": "bolt_large_target_point",
+      "source_unit": "centimetre",
+      "bbox_metres": [
+        0.02,
+        0.02,
+        0.08
+      ],
+      "mass_kg": 0.012566370614359173,
+      "visual_object_count": 1,
+      "collision_mesh_count": 1,
+      "collision_names": [
+        "bolt"
+      ],
+      "urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/bolt_large_target_point/bolt_large_target_point.urdf"
+    },
+    {
+      "category": "arat_bolt",
+      "model": "bolt_small_starting_point",
+      "source_unit": "centimetre",
+      "bbox_metres": [
+        0.008,
+        0.008,
+        0.06
+      ],
+      "mass_kg": 0.0015079644737231008,
+      "visual_object_count": 1,
+      "collision_mesh_count": 1,
+      "collision_names": [
+        "bolt"
+      ],
+      "urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/bolt_small_starting_point/bolt_small_starting_point.urdf"
+    },
+    {
+      "category": "arat_bolt",
+      "model": "bolt_small_target_point",
+      "source_unit": "centimetre",
+      "bbox_metres": [
+        0.008,
+        0.008,
+        0.06
+      ],
+      "mass_kg": 0.0015079644737231008,
+      "visual_object_count": 1,
+      "collision_mesh_count": 1,
+      "collision_names": [
+        "bolt"
+      ],
+      "urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/bolt_small_target_point/bolt_small_target_point.urdf"
+    },
+    {
+      "category": "arat_bolt",
+      "model": "bolt_washer_target_point",
+      "source_unit": "centimetre",
+      "bbox_metres": [
+        0.008,
+        0.008,
+        0.085
+      ],
+      "mass_kg": 0.0021362830044410596,
+      "visual_object_count": 1,
+      "collision_mesh_count": 1,
+      "collision_names": [
+        "bolt"
+      ],
+      "urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/bolt_washer_target_point/bolt_washer_target_point.urdf"
+    },
+    {
+      "category": "arat_washer",
+      "model": "washer",
+      "source_unit": "centimetre",
+      "bbox_metres": [
+        0.035,
+        0.035,
+        0.0031750000000000003
+      ],
+      "mass_kg": 0.016,
+      "visual_object_count": 1,
+      "collision_mesh_count": 16,
+      "collision_names": [
+        "wedge_00",
+        "wedge_01",
+        "wedge_02",
+        "wedge_03",
+        "wedge_04",
+        "wedge_05",
+        "wedge_06",
+        "wedge_07",
+        "wedge_08",
+        "wedge_09",
+        "wedge_10",
+        "wedge_11",
+        "wedge_12",
+        "wedge_13",
+        "wedge_14",
+        "wedge_15"
+      ],
+      "urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/washer/washer.urdf"
+    },
+    {
+      "category": "arat_cup",
+      "model": "cup_blue",
+      "source_unit": "centimetre",
+      "bbox_metres": [
+        0.075,
+        0.075,
+        0.12
+      ],
+      "mass_kg": 0.1254,
+      "visual_object_count": 1,
+      "collision_mesh_count": 17,
+      "collision_names": [
+        "floor",
+        "wall_00",
+        "wall_01",
+        "wall_02",
+        "wall_03",
+        "wall_04",
+        "wall_05",
+        "wall_06",
+        "wall_07",
+        "wall_08",
+        "wall_09",
+        "wall_10",
+        "wall_11",
+        "wall_12",
+        "wall_13",
+        "wall_14",
+        "wall_15"
+      ],
+      "urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/cup_blue/cup_blue.urdf",
+      "fillable_volume_metres": {
+        "radius": 0.027000000000000003,
+        "height": 0.11449999999999999,
+        "z_min": 0.0045000000000000005
+      }
+    },
+    {
+      "category": "arat_cup",
+      "model": "cup_red",
+      "source_unit": "centimetre",
+      "bbox_metres": [
+        0.075,
+        0.075,
+        0.12
+      ],
+      "mass_kg": 0.1254,
+      "visual_object_count": 1,
+      "collision_mesh_count": 17,
+      "collision_names": [
+        "floor",
+        "wall_00",
+        "wall_01",
+        "wall_02",
+        "wall_03",
+        "wall_04",
+        "wall_05",
+        "wall_06",
+        "wall_07",
+        "wall_08",
+        "wall_09",
+        "wall_10",
+        "wall_11",
+        "wall_12",
+        "wall_13",
+        "wall_14",
+        "wall_15"
+      ],
+      "urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/cup_red/cup_red.urdf",
+      "fillable_volume_metres": {
+        "radius": 0.027000000000000003,
+        "height": 0.11449999999999999,
+        "z_min": 0.0045000000000000005
+      }
+    },
+    {
+      "category": "arat_alloy_tube",
+      "model": "small_alloy_tube",
+      "source_unit": "centimetre",
+      "bbox_metres": [
+        0.01,
+        0.01,
+        0.16
+      ],
+      "mass_kg": 0.014199999999999999,
+      "visual_object_count": 1,
+      "collision_mesh_count": 32,
+      "collision_names": [
+        "wall_00_00",
+        "wall_00_01",
+        "wall_00_02",
+        "wall_00_03",
+        "wall_00_04",
+        "wall_00_05",
+        "wall_00_06",
+        "wall_00_07",
+        "wall_00_08",
+        "wall_00_09",
+        "wall_00_10",
+        "wall_00_11",
+        "wall_00_12",
+        "wall_00_13",
+        "wall_00_14",
+        "wall_00_15",
+        "wall_01_00",
+        "wall_01_01",
+        "wall_01_02",
+        "wall_01_03",
+        "wall_01_04",
+        "wall_01_05",
+        "wall_01_06",
+        "wall_01_07",
+        "wall_01_08",
+        "wall_01_09",
+        "wall_01_10",
+        "wall_01_11",
+        "wall_01_12",
+        "wall_01_13",
+        "wall_01_14",
+        "wall_01_15"
+      ],
+      "urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/small_alloy_tube/small_alloy_tube.urdf"
+    },
+    {
+      "category": "arat_alloy_tube",
+      "model": "large_alloy_tube",
+      "source_unit": "centimetre",
+      "bbox_metres": [
+        0.025,
+        0.025,
+        0.115
+      ],
+      "mass_kg": 0.0385,
+      "visual_object_count": 1,
+      "collision_mesh_count": 16,
+      "collision_names": [
+        "wall_00",
+        "wall_01",
+        "wall_02",
+        "wall_03",
+        "wall_04",
+        "wall_05",
+        "wall_06",
+        "wall_07",
+        "wall_08",
+        "wall_09",
+        "wall_10",
+        "wall_11",
+        "wall_12",
+        "wall_13",
+        "wall_14",
+        "wall_15"
+      ],
+      "urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/large_alloy_tube/large_alloy_tube.urdf"
+    },
+    {
+      "category": "desk",
+      "model": "arat_standard_table",
+      "source_unit": "centimetre",
+      "bbox_metres": [
+        0.49,
+        0.76,
+        0.75
+      ],
+      "mass_kg": 9.72,
+      "visual_object_count": 5,
+      "collision_mesh_count": 5,
+      "collision_names": [
+        "tabletop",
+        "leg_1",
+        "leg_2",
+        "leg_3",
+        "leg_4"
+      ],
+      "urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/arat_standard_table/arat_standard_table.urdf"
+    },
+    {
+      "category": "shelf",
+      "model": "arat_standard_shelf",
+      "source_unit": "centimetre",
+      "bbox_metres": [
+        0.23,
+        0.46,
+        0.37
+      ],
+      "mass_kg": 2.199,
+      "visual_object_count": 5,
+      "collision_mesh_count": 5,
+      "collision_names": [
+        "top_plank",
+        "post_1",
+        "post_2",
+        "post_3",
+        "post_4"
+      ],
+      "urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/arat_standard_shelf/arat_standard_shelf.urdf"
+    }
+  ]
+}

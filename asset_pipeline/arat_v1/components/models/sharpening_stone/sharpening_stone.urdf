@@ -1,0 +1,22 @@
+<?xml version="1.0" ?>
+<robot name="sharpening_stone">
+  <link name="base_link">
+    <inertial>
+      <origin xyz="0 0 0.005" rpy="0 0 0"/>
+      <mass value="0.0603"/>
+      <inertia ixx="3.643125e-06" ixy="0" ixz="0" iyy="5.07525e-05" iyz="0" izz="5.3390625e-05"/>
+    </inertial>
+    <visual name="visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/visual.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="stone">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/stone.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+  </link>
+</robot>

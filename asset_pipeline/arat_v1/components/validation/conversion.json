@@ -1,0 +1,252 @@
+{
+  "status": "passed",
+  "dataset_name": "arat-assets-v1",
+  "asset_version": 1,
+  "authority": "ARAT_specification.md",
+  "asset_count": 27,
+  "assets": [
+    {
+      "category": "arat_wooden_block",
+      "model": "wooden_block_10",
+      "source_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/wooden_block_10/wooden_block_10.urdf",
+      "processed_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/wooden_block_10/wooden_block_10_with_meta_links.urdf",
+      "usd": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_wooden_block/wooden_block_10/usd/wooden_block_10.usd",
+      "metadata": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_wooden_block/wooden_block_10/misc/metadata.json",
+      "usd_size_bytes": 35796
+    },
+    {
+      "category": "arat_wooden_block",
+      "model": "wooden_block_7_5",
+      "source_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/wooden_block_7_5/wooden_block_7_5.urdf",
+      "processed_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/wooden_block_7_5/wooden_block_7_5_with_meta_links.urdf",
+      "usd": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_wooden_block/wooden_block_7_5/usd/wooden_block_7_5.usd",
+      "metadata": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_wooden_block/wooden_block_7_5/misc/metadata.json",
+      "usd_size_bytes": 35791
+    },
+    {
+      "category": "arat_wooden_block",
+      "model": "wooden_block_5_0",
+      "source_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/wooden_block_5_0/wooden_block_5_0.urdf",
+      "processed_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/wooden_block_5_0/wooden_block_5_0_with_meta_links.urdf",
+      "usd": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_wooden_block/wooden_block_5_0/usd/wooden_block_5_0.usd",
+      "metadata": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_wooden_block/wooden_block_5_0/misc/metadata.json",
+      "usd_size_bytes": 35781
+    },
+    {
+      "category": "arat_wooden_block",
+      "model": "wooden_block_2_5",
+      "source_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/wooden_block_2_5/wooden_block_2_5.urdf",
+      "processed_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/wooden_block_2_5/wooden_block_2_5_with_meta_links.urdf",
+      "usd": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_wooden_block/wooden_block_2_5/usd/wooden_block_2_5.usd",
+      "metadata": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_wooden_block/wooden_block_2_5/misc/metadata.json",
+      "usd_size_bytes": 35781
+    },
+    {
+      "category": "arat_cricket_ball",
+      "model": "cricket_ball",
+      "source_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/cricket_ball/cricket_ball.urdf",
+      "processed_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/cricket_ball/cricket_ball_with_meta_links.urdf",
+      "usd": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_cricket_ball/cricket_ball/usd/cricket_ball.usd",
+      "metadata": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_cricket_ball/cricket_ball/misc/metadata.json",
+      "usd_size_bytes": 547275
+    },
+    {
+      "category": "arat_tin",
+      "model": "tin_lid",
+      "source_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/tin_lid/tin_lid.urdf",
+      "processed_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/tin_lid/tin_lid_with_meta_links.urdf",
+      "usd": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_tin/tin_lid/usd/tin_lid.usd",
+      "metadata": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_tin/tin_lid/misc/metadata.json",
+      "usd_size_bytes": 90159
+    },
+    {
+      "category": "arat_sharpening_stone",
+      "model": "sharpening_stone",
+      "source_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/sharpening_stone/sharpening_stone.urdf",
+      "processed_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/sharpening_stone/sharpening_stone_with_meta_links.urdf",
+      "usd": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_sharpening_stone/sharpening_stone/usd/sharpening_stone.usd",
+      "metadata": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_sharpening_stone/sharpening_stone/misc/metadata.json",
+      "usd_size_bytes": 35803
+    },
+    {
+      "category": "arat_marble",
+      "model": "marble",
+      "source_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/marble/marble.urdf",
+      "processed_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/marble/marble_with_meta_links.urdf",
+      "usd": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_marble/marble/usd/marble.usd",
+      "metadata": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_marble/marble/misc/metadata.json",
+      "usd_size_bytes": 547821
+    },
+    {
+      "category": "arat_ball_bearing",
+      "model": "ball_bearing",
+      "source_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/ball_bearing/ball_bearing.urdf",
+      "processed_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/ball_bearing/ball_bearing_with_meta_links.urdf",
+      "usd": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_ball_bearing/ball_bearing/usd/ball_bearing.usd",
+      "metadata": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_ball_bearing/ball_bearing/misc/metadata.json",
+      "usd_size_bytes": 547555
+    },
+    {
+      "category": "arat_tube_planks_and_pegs",
+      "model": "tube_starting_fixture",
+      "source_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/tube_starting_fixture/tube_starting_fixture.urdf",
+      "processed_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/tube_starting_fixture/tube_starting_fixture_with_meta_links.urdf",
+      "usd": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_tube_planks_and_pegs/tube_starting_fixture/usd/tube_starting_fixture.usd",
+      "metadata": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_tube_planks_and_pegs/tube_starting_fixture/misc/metadata.json",
+      "usd_size_bytes": 193939
+    },
+    {
+      "category": "arat_tube_planks_and_pegs",
+      "model": "tube_target_fixture",
+      "source_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/tube_target_fixture/tube_target_fixture.urdf",
+      "processed_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/tube_target_fixture/tube_target_fixture_with_meta_links.urdf",
+      "usd": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_tube_planks_and_pegs/tube_target_fixture/usd/tube_target_fixture.usd",
+      "metadata": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_tube_planks_and_pegs/tube_target_fixture/misc/metadata.json",
+      "usd_size_bytes": 193925
+    },
+    {
+      "category": "arat_tube_planks_and_pegs",
+      "model": "washer_target_fixture",
+      "source_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/washer_target_fixture/washer_target_fixture.urdf",
+      "processed_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/washer_target_fixture/washer_target_fixture_with_meta_links.urdf",
+      "usd": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_tube_planks_and_pegs/washer_target_fixture/usd/washer_target_fixture.usd",
+      "metadata": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_tube_planks_and_pegs/washer_target_fixture/misc/metadata.json",
+      "usd_size_bytes": 114511
+    },
+    {
+      "category": "arat_plank",
+      "model": "plank_starting_point",
+      "source_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/plank_starting_point/plank_starting_point.urdf",
+      "processed_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/plank_starting_point/plank_starting_point_with_meta_links.urdf",
+      "usd": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_plank/plank_starting_point/usd/plank_starting_point.usd",
+      "metadata": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_plank/plank_starting_point/misc/metadata.json",
+      "usd_size_bytes": 35908
+    },
+    {
+      "category": "arat_plank",
+      "model": "plank_target_point",
+      "source_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/plank_target_point/plank_target_point.urdf",
+      "processed_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/plank_target_point/plank_target_point_with_meta_links.urdf",
+      "usd": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_plank/plank_target_point/usd/plank_target_point.usd",
+      "metadata": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_plank/plank_target_point/misc/metadata.json",
+      "usd_size_bytes": 35928
+    },
+    {
+      "category": "arat_plank",
+      "model": "plank_washer_target_point",
+      "source_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/plank_washer_target_point/plank_washer_target_point.urdf",
+      "processed_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/plank_washer_target_point/plank_washer_target_point_with_meta_links.urdf",
+      "usd": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_plank/plank_washer_target_point/usd/plank_washer_target_point.usd",
+      "metadata": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_plank/plank_washer_target_point/misc/metadata.json",
+      "usd_size_bytes": 35793
+    },
+    {
+      "category": "arat_bolt",
+      "model": "bolt_large_starting_point",
+      "source_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/bolt_large_starting_point/bolt_large_starting_point.urdf",
+      "processed_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/bolt_large_starting_point/bolt_large_starting_point_with_meta_links.urdf",
+      "usd": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_bolt/bolt_large_starting_point/usd/bolt_large_starting_point.usd",
+      "metadata": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_bolt/bolt_large_starting_point/misc/metadata.json",
+      "usd_size_bytes": 88115
+    },
+    {
+      "category": "arat_bolt",
+      "model": "bolt_large_target_point",
+      "source_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/bolt_large_target_point/bolt_large_target_point.urdf",
+      "processed_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/bolt_large_target_point/bolt_large_target_point_with_meta_links.urdf",
+      "usd": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_bolt/bolt_large_target_point/usd/bolt_large_target_point.usd",
+      "metadata": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_bolt/bolt_large_target_point/misc/metadata.json",
+      "usd_size_bytes": 88086
+    },
+    {
+      "category": "arat_bolt",
+      "model": "bolt_small_starting_point",
+      "source_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/bolt_small_starting_point/bolt_small_starting_point.urdf",
+      "processed_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/bolt_small_starting_point/bolt_small_starting_point_with_meta_links.urdf",
+      "usd": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_bolt/bolt_small_starting_point/usd/bolt_small_starting_point.usd",
+      "metadata": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_bolt/bolt_small_starting_point/misc/metadata.json",
+      "usd_size_bytes": 88164
+    },
+    {
+      "category": "arat_bolt",
+      "model": "bolt_small_target_point",
+      "source_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/bolt_small_target_point/bolt_small_target_point.urdf",
+      "processed_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/bolt_small_target_point/bolt_small_target_point_with_meta_links.urdf",
+      "usd": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_bolt/bolt_small_target_point/usd/bolt_small_target_point.usd",
+      "metadata": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_bolt/bolt_small_target_point/misc/metadata.json",
+      "usd_size_bytes": 88165
+    },
+    {
+      "category": "arat_bolt",
+      "model": "bolt_washer_target_point",
+      "source_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/bolt_washer_target_point/bolt_washer_target_point.urdf",
+      "processed_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/bolt_washer_target_point/bolt_washer_target_point_with_meta_links.urdf",
+      "usd": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_bolt/bolt_washer_target_point/usd/bolt_washer_target_point.usd",
+      "metadata": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_bolt/bolt_washer_target_point/misc/metadata.json",
+      "usd_size_bytes": 88175
+    },
+    {
+      "category": "arat_washer",
+      "model": "washer",
+      "source_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/washer/washer.urdf",
+      "processed_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/washer/washer_with_meta_links.urdf",
+      "usd": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_washer/washer/usd/washer.usd",
+      "metadata": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_washer/washer/misc/metadata.json",
+      "usd_size_bytes": 85177
+    },
+    {
+      "category": "arat_cup",
+      "model": "cup_blue",
+      "source_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/cup_blue/cup_blue.urdf",
+      "processed_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/cup_blue/cup_blue_with_meta_links.urdf",
+      "usd": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_cup/cup_blue/usd/cup_blue.usd",
+      "metadata": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_cup/cup_blue/misc/metadata.json",
+      "usd_size_bytes": 94602
+    },
+    {
+      "category": "arat_cup",
+      "model": "cup_red",
+      "source_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/cup_red/cup_red.urdf",
+      "processed_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/cup_red/cup_red_with_meta_links.urdf",
+      "usd": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_cup/cup_red/usd/cup_red.usd",
+      "metadata": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_cup/cup_red/misc/metadata.json",
+      "usd_size_bytes": 94594
+    },
+    {
+      "category": "arat_alloy_tube",
+      "model": "small_alloy_tube",
+      "source_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/small_alloy_tube/small_alloy_tube.urdf",
+      "processed_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/small_alloy_tube/small_alloy_tube_with_meta_links.urdf",
+      "usd": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_alloy_tube/small_alloy_tube/usd/small_alloy_tube.usd",
+      "metadata": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_alloy_tube/small_alloy_tube/misc/metadata.json",
+      "usd_size_bytes": 84716
+    },
+    {
+      "category": "arat_alloy_tube",
+      "model": "large_alloy_tube",
+      "source_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/large_alloy_tube/large_alloy_tube.urdf",
+      "processed_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/large_alloy_tube/large_alloy_tube_with_meta_links.urdf",
+      "usd": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_alloy_tube/large_alloy_tube/usd/large_alloy_tube.usd",
+      "metadata": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/arat_alloy_tube/large_alloy_tube/misc/metadata.json",
+      "usd_size_bytes": 84951
+    },
+    {
+      "category": "desk",
+      "model": "arat_standard_table",
+      "source_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/arat_standard_table/arat_standard_table.urdf",
+      "processed_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/arat_standard_table/arat_standard_table_with_meta_links.urdf",
+      "usd": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/desk/arat_standard_table/usd/arat_standard_table.usd",
+      "metadata": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/desk/arat_standard_table/misc/metadata.json",
+      "usd_size_bytes": 138541
+    },
+    {
+      "category": "shelf",
+      "model": "arat_standard_shelf",
+      "source_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/arat_standard_shelf/arat_standard_shelf.urdf",
+      "processed_urdf": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/asset_pipeline/arat_v1/components/models/arat_standard_shelf/arat_standard_shelf_with_meta_links.urdf",
+      "usd": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/shelf/arat_standard_shelf/usd/arat_standard_shelf.usd",
+      "metadata": "/home/minyeongk/Desktop/emg/Behavior-1K-arat/datasets/arat-assets-v1/objects/shelf/arat_standard_shelf/misc/metadata.json",
+      "usd_size_bytes": 138210
+    }
+  ]
+}

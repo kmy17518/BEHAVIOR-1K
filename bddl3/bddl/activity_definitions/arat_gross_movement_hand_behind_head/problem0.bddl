@@ -1,0 +1,19 @@
+(define (problem arat_gross_movement_hand_behind_head-0)
+  (:domain behavior-1k)
+  (:objects
+    mannequin.n.02_1 - mannequin.n.02
+    agent.n.01_1 - agent.n.01
+  )
+  (:init
+    (inroom mannequin.n.02_1 empty_room)
+    (not (touching mannequin.n.02_1 agent.n.01_1))
+  )
+  ; The physical floor is an OmniGibson ground-plane primitive, not a BDDL object.
+  ; Completion proxy: any agent-mannequin contact. The scorer layer additionally
+  ; verifies the target head region and palmar-side contact required for scoring.
+  (:goal
+    (and
+      (touching ?mannequin.n.02_1 ?agent.n.01_1)
+    )
+  )
+)

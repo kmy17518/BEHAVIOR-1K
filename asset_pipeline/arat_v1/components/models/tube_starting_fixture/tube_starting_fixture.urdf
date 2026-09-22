@@ -1,0 +1,34 @@
+<?xml version="1.0" ?>
+<robot name="tube_starting_fixture">
+  <link name="base_link">
+    <inertial>
+      <origin xyz="0 0 0.075" rpy="0 0 0"/>
+      <mass value="0.0609637149"/>
+      <inertia ixx="0.000151012202" ixy="0" ixz="0" iyy="0.00013259608" iyz="0" izz="5.49943511e-05"/>
+    </inertial>
+    <visual name="visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/visual.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="plank">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/plank.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="large_peg">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/large_peg.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="small_peg">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/small_peg.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+  </link>
+</robot>

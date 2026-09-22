@@ -1,0 +1,46 @@
+<?xml version="1.0" ?>
+<robot name="arat_standard_table">
+  <link name="base_link">
+    <inertial>
+      <origin xyz="0 0 0.375" rpy="0 0 0"/>
+      <mass value="9.72"/>
+      <inertia ixx="0.923481" ixy="0" ixz="0" iyy="0.650106" iyz="0" izz="0.662337"/>
+    </inertial>
+    <visual name="visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/visual.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="tabletop">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/tabletop.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="leg_1">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/leg_1.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="leg_2">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/leg_2.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="leg_3">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/leg_3.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="leg_4">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/leg_4.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+  </link>
+</robot>

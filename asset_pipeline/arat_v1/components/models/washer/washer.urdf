@@ -1,0 +1,112 @@
+<?xml version="1.0" ?>
+<robot name="washer">
+  <link name="base_link">
+    <inertial>
+      <origin xyz="0 0 0.0015875" rpy="0 0 0"/>
+      <mass value="0.016"/>
+      <inertia ixx="1.64677417e-06" ixy="0" ixz="0" iyy="1.64677417e-06" iyz="0" izz="3.26666667e-06"/>
+    </inertial>
+    <visual name="visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/visual.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="wedge_00">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wedge_00.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="wedge_01">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wedge_01.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="wedge_02">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wedge_02.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="wedge_03">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wedge_03.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="wedge_04">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wedge_04.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="wedge_05">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wedge_05.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="wedge_06">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wedge_06.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="wedge_07">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wedge_07.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="wedge_08">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wedge_08.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="wedge_09">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wedge_09.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="wedge_10">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wedge_10.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="wedge_11">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wedge_11.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="wedge_12">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wedge_12.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="wedge_13">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wedge_13.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="wedge_14">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wedge_14.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <collision name="wedge_15">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/collision/wedge_15.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+  </link>
+</robot>
