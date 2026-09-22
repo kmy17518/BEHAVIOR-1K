@@ -81,8 +81,8 @@ camera_rigs:
         pose:
           # Resolved right_hand_C_MC -> USD Camera pose. USD looks along -Z;
           # wrist_camera_extrinsics.yaml records the matching ROS optical frame.
-          position: [-0.055, 0.072, 0.090]
-          orientation_xyzw: [0.707106781187, -0.707106781187, 0.0, 0.0]
+          position: [-0.035, 0.072, 0.090]
+          orientation_xyzw: [0.5, -0.5, -0.5, 0.5]
 
       pinky_wrist:
         sensor_name: arat_wrist_camera_pinky
@@ -98,8 +98,8 @@ camera_rigs:
           horizontal_fov_degrees: 220.0
           distortion_coefficients: [0.0, 0.0, 0.0, 0.0]
         pose:
-          position: [-0.055, -0.072, 0.090]
-          orientation_xyzw: [0.707106781187, -0.707106781187, 0.0, 0.0]
+          position: [-0.035, -0.072, 0.090]
+          orientation_xyzw: [0.5, -0.5, -0.5, 0.5]
 
     layouts:
       teleop:

@@ -324,7 +324,7 @@ def main() -> None:
         print(f"Mean absolute thumb/pinky image difference: {difference:.3f}")
         print(
             "Frames: X=red, Y=green, Z=blue; thumb frustum=yellow, pinky frustum=magenta. "
-            f"Both principal rays follow +Z of {extrinsics['hand_frame']['link']}."
+            f"Both principal rays follow palmar +X of {extrinsics['hand_frame']['link']}."
         )
 
         if not args.headless:
