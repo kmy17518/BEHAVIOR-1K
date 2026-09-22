@@ -197,38 +197,28 @@ python dex_teleop/scripts/launch_hand_bench.py \
 
 ### Synchroni SDK (required for `--emg`)
 
-The OYMotion band is driven by the OYMotion Synchroni Python SDK, which
-`setup.sh` does not install. Use our fork (branch `my`; it adds the
-`SYNCHRONI_BLE_ADAPTER` adapter selection and connection-recovery fixes the
-sidecar relies on). Install it with `--no-deps`: its `setup.py` currently pins
-`bleak<2`, whereas the EMG path was only validated with `bleak 3.0.2` (what
-`behavior_dex` runs). bleak 2.x scans fine with the fork but streaming has not
-been verified on it, and 1.x is untested.
+`setup.sh` does not install the OYMotion SDK; use our fork:
 
 ```bash
 git clone --branch my https://github.com/13RENDA/synchroni-sensor-sdk.git ../synchroni-sensor-sdk
 pip install -e ../synchroni-sensor-sdk --no-deps
-pip install "bleak>=3.0.2" "flatbuffers>=25.0.0"
+pip install "bleak>=2.1.1,<3" "flatbuffers>=25.0.0"
 
-# Pre-check without the bench: band on, adapter from `bluetoothctl list`
+# Pre-check: band on, adapter from `bluetoothctl list`; expect e.g. [('OYWW1000', 'D8:71:4D:8D:99:92')]
 SYNCHRONI_BLE_ADAPTER=hci1 python -c "from sensor import SensorController; \
   print([(d.Name, d.Address) for d in SensorController().scan(5000)])"
-#   e.g. [('OYWW1000', 'D8:71:4D:8D:99:92')]; [] means the band is off or out of range
 ```
 
-(`--emg-sdk-path ../synchroni-sensor-sdk` is the alternative to `pip install -e`.)
+If the band does not connect or stream, switch to the versions `behavior_dex`
+was validated with: `pip install "bleak>=3.0.2" "flatbuffers>=25.0.0"`.
 
-How the band is found: `--emg` starts a sidecar Python process in the same
-environment; it runs a BLE scan for `--emg-scan-ms` (5 s) on `--emg-adapter`,
-then selects **exactly one** device: the one whose address equals, or whose
-name contains, `--emg-device`, or, when the flag is omitted, the single device
-whose name starts with `OY`, `Sync`, or `gForce`. Zero or several matches abort
-before Isaac Sim starts. It then connects, disables the IMU stream, applies and
-verifies the firmware filters, and streams EMG into the recording. Firmware
-filters default to HPF on, LPF on, 60 Hz notch (`--no-emg-hpf`,
-`--no-emg-lpf`, `--emg-notch 50|both|off`). The waveform monitor is docked
-right of the main view (`--no-emg-display` to skip it), and `--display decoder`
-adds the VEMG2Pose hand from the `emg2pose` checkout beside this repository.
+`--emg` scans for `--emg-scan-ms` (5 s) and needs exactly one match: the
+`--emg-device` address or name substring, or, without the flag, the single
+`OY*`/`Sync*`/`gForce*` device. Firmware filters default to HPF on, LPF on,
+60 Hz notch (`--no-emg-hpf`, `--no-emg-lpf`, `--emg-notch 50|both|off`). The
+waveform monitor docks right of the main view (`--no-emg-display` to skip it);
+`--display decoder` adds the VEMG2Pose hand from the `emg2pose` checkout
+beside this repository.
 
 While recording, `R` ends the episode and starts a new one with an open hand
 (`demo_0`, `demo_1`, ...); paused or stale steps are not recorded. Ctrl+C
