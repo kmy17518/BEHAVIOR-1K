@@ -127,6 +127,42 @@ are done in MANUS Core on Windows; the Linux Integrated SDK only consumes
 them. The `.mcal` is optional (`--manus-calibration` may be omitted) but finger
 angles are only accurate with the wearer's own calibration.
 
+### Already have the SDK and dongle set up? Start at 5d
+
+Skip 5a-5c if all of this holds; check it first (no bridge needed):
+
+```bash
+# SDK must be exactly v3.1.1: the build verifies the SHA-256 of these headers and
+# libraries and rejects any other release. <SDK> is your ManusSDK_v3.1.1 folder.
+ls <SDK>/SDKClient_Linux/ManusSDK/include/ManusSDK.h <SDK>/SDKClient_Linux/ManusSDK/lib/libManusSDK_Integrated.so
+
+# Dongle enumerated (glove may still be off)
+lsusb -d 3325:      # expect: ID 3325:0049 Manus VR (https://www.manus-vr.com) Sensor Dongle
+
+# Your user may open it: the dongle's hidraw node must be crw-rw-rw- (root-only => do 5c)
+for h in /sys/class/hidraw/hidraw*; do v=$(udevadm info -q property -p "$h" | sed -n 's/^ID_VENDOR_ID=//p'); [ "$v" = 3325 ] && ls -l "/dev/$(basename "$h")"; done
+
+g++ --version        # C++17-capable compiler for 5d
+```
+
+Then run 5d with `--sdk-root <SDK>` (the search also accepts `<SDK>/ManusSDK`,
+`<SDK>/SDKClient_Linux/ManusSDK`, `<SDK>/SDKMinimalClient_Linux/ManusSDK`, or a
+parent with `vendor/ManusSDK_v*/`), and 5e with your existing `.mcal`. Whether
+the glove is paired, powered, and licensed can only be checked by talking to
+the SDK, so 5e is that check; 5d is a two-second compile. Reading 5e:
+
+- `"passed": true`: glove, dongle, license, and calibration are fine; go to 6.
+- `Could not find a matching MANUS SDK header and libManusSDK_Integrated.so`:
+  wrong `--sdk-root` or an SDK release other than 3.1.1.
+- `MANUS bridge did not publish a validated right-hand articulation within N
+  seconds`: SDK and sidecar work, but no glove data: glove off or not paired to
+  this dongle, dongle not readable (permissions), or no SDK license on it.
+- `Calibration rejected for right glove`: the `.mcal` belongs to another glove
+  or SDK version; omit `--glove-calibration` to test without it.
+
+The official `SDKMinimalClient_Linux` example from the SDK zip (mode `1`,
+Integrated) is an equivalent independent glove check if you already build it.
+
 ## 6. Run the hand bench with the glove
 
 ```bash
