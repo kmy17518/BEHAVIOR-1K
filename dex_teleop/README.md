@@ -3,7 +3,8 @@
 A right Sharpa hand fixed above a table in OmniGibson (Isaac Sim 5.1). Its 22
 finger joints follow a MANUS glove (or Quest hand tracking); the wrist is held
 by the simulator, so no wrist tracker is involved. Press `B` to switch between
-the default view (back of the hand) and the egocentric view (palm).
+the default view (back of the hand) and the egocentric view (palm). Sessions
+can be recorded to HDF5 together with the OYMotion EMG wristband (step 7).
 
 These steps were verified on Ubuntu 22.04 with an RTX 4090 in a fresh conda
 environment. Budget roughly 30 minutes of downloads (Isaac Sim wheels plus
@@ -180,7 +181,48 @@ Franka that carries the hand). Wrist options (`--wrist-source`, `--source`,
 VIVE/tracker flags) are rejected on purpose. Quest hand tracking works too:
 `--hand-source quest` listens for the HTS app on UDP 9000.
 
-## 7. Tests
+## 7. Record a session, with or without the EMG wristband
+
+```bash
+# Glove only -> dex_teleop/outputs/recordings/hand_bench_<timestamp>.hdf5
+python dex_teleop/scripts/launch_hand_bench.py \
+  --hand-source manus --manus-calibration /path/to/right-hand.mcal --record
+
+# Glove + OYMotion EMG (implies --record); the band must be on and paired to no one else
+python dex_teleop/scripts/launch_hand_bench.py \
+  --hand-source manus --manus-calibration /path/to/right-hand.mcal \
+  --emg --emg-device D8:71:4D:8D:99:92 --emg-adapter hci1 \
+  --recording-path dex_teleop/outputs/recordings/session_01.hdf5
+```
+
+`--emg` needs the Synchroni SDK in the same environment: `pip install -e
+/path/to/synchroni-sensor-sdk` (or pass `--emg-sdk-path`). `--emg-adapter` is
+the BlueZ adapter that owns the band (`bluetoothctl list`; `hci0` is not
+guaranteed). With one `OY*`/`gForce*` band in range `--emg-device` can be
+omitted. The Bluetooth connection is made before Isaac Sim starts, the
+waveform monitor is docked right of the main view (`--no-emg-display` to skip
+it), and `--display decoder` adds the VEMG2Pose hand from the `emg2pose`
+checkout beside this repository. Firmware filters default to HPF on, LPF on,
+60 Hz notch (`--no-emg-hpf`, `--no-emg-lpf`, `--emg-notch 50|both|off`).
+
+While recording, `R` ends the episode and starts a new one with an open hand
+(`demo_0`, `demo_1`, ...); paused or stale steps are not recorded. Ctrl+C
+finishes the episode and publishes the file atomically. The layout is the one
+the ARAT launcher and its replay/analysis tools use:
+
+```text
+/data/demo_N/{action,state,...}       22 finger targets per step + serialized simulator state
+/hand_tracking/articulation_streams   native-rate glove/Quest articulation (articulation.manus | articulation.quest)
+/hand_tracking/wrist_streams          wrist.fixed_wrist (constant; the bench holds the wrist)
+/hand_tracking/retargeting_streams    adaptive.<source>+fixed_wrist Sharpa joint results
+/hand_tracking/action_alignment       exact stream rows behind every action
+/human_hand_pose/demo_N               action-aligned 21 landmarks (raw_available is false: no Quest wrist)
+/action_timing/demo_N                 monotonic clock before/after each env.step
+/emg/samples, /emg/batches            native-rate microvolt samples and callback diagnostics   (--emg)
+/synchronization/demo_N               EMG row ranges per episode and per action                (--emg)
+```
+
+## 8. Tests
 
 ```bash
 pytest -q dex_teleop/tests
@@ -201,6 +243,11 @@ pytest -q dex_teleop/tests
   glove data arrived. Power the glove, re-plug the dongle, check the udev rule
   (5c), and confirm in MANUS Core (Windows) that the dongle carries the SDK
   license.
+- `BleakError: adapter 'hci0' not found`: pass the adapter listed by
+  `bluetoothctl list` / `ls /sys/class/bluetooth` with `--emg-adapter`.
+- `Expected exactly one EMG device matching ..., found 0`: the band is off,
+  out of range, or connected to another host; the scan runs before Isaac Sim
+  starts, so nothing else was touched.
 
 ## More
 

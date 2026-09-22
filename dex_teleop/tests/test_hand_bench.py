@@ -188,6 +188,73 @@ def test_cli_accepts_only_finger_sources():
         launcher._validate_args(parser.parse_args(["--view-only", "--screenshot-dir", "shots"]))
 
 
+def test_hand_bench_rig_docks_emg_panels():
+    panels = load_camera_rig(DEFAULT_CAMERA_RIG).layout(CAMERA_LAYOUT)["panels"]
+
+    assert panels["emg"]["dock"]["parent"] == "main"
+    assert panels["emg"]["dock"]["position"] == "right"
+    assert panels["decoder"]["dock"]["parent"] == "OYMotion EMG"
+
+
+def test_recording_and_emg_cli_rules():
+    parser = launcher._parser()
+    emg = parser.parse_args(["--emg", "--emg-device", "D8:71:4D:8D:99:92", "--display", "decoder"])
+    launcher._validate_args(emg)
+    assert emg.record is True and emg.visualize_decoder is True
+    record_only = parser.parse_args(["--record", "--recording-path", "out.hdf5"])
+    launcher._validate_args(record_only)
+    assert record_only.emg is False
+    for argv, message in (
+        (["--emg-device", "x"], "require --emg"),
+        (["--emg-notch", "50"], "require --emg"),
+        (["--recording-path", "x.hdf5"], "requires --record or --emg"),
+        (["--emg", "--view-only"], "drop --view-only"),
+        (["--record", "--screenshot-dir", "shots"], "drop --view-only"),
+        (["--emg", "--no-emg-display", "--display", "decoder"], "requires the EMG display"),
+        (["--emg", "--emg2pose-device", "cpu"], "require --visualize-decoder"),
+        (["--emg", "--emg-connect-timeout", "0"], "must be positive"),
+    ):
+        with pytest.raises(SystemExit, match=message):
+            launcher._validate_args(parser.parse_args(argv))
+    path = launcher.default_recording_path(now=0.0)
+    assert path.parent == launcher.DEFAULT_RECORDING_ROOT
+    assert path.name.startswith("hand_bench_") and path.suffix == ".hdf5"
+
+
+def test_create_emg_session_mirrors_the_arat_launcher_defaults(tmp_path: Path):
+    args = launcher._parser().parse_args(["--emg", "--no-emg-lpf", "--emg-notch", "both", "--emg-device", "OYWW"])
+    launcher._validate_args(args)
+
+    session = launcher.create_emg_session(args, tmp_path / "bench.hdf5")
+
+    assert session.output_path.name == f".bench.hdf5.{__import__('os').getpid()}.emg.in_progress.hdf5"
+    assert session.device == "OYWW" and session.adapter == "hci0"
+    assert (session.filter_hpf, session.filter_lpf, session.filter_notch) == (True, False, "both")
+    assert session.decoder_hand == "right" and session.visualize_decoder is False
+
+
+def test_recording_metadata_describes_the_fixed_wrist_and_retargeter():
+    from dex_teleop.omnigibson.hand_tracking_recording import HandTrackingRecordingSession
+
+    args = launcher._parser().parse_args(["--hand-source", "quest", "--port", "9100"])
+    worker = launcher.create_worker(args, articulation_source=_IdleSource())
+    session = HandTrackingRecordingSession()
+
+    launcher.set_recording_metadata(session, worker, args)
+
+    metadata = session.writer_kwargs()["stream_metadata"]
+    assert metadata["articulation.quest"]["endpoint"] == "udp://0.0.0.0:9100"
+    fixed = metadata["wrist.fixed_wrist"]
+    assert fixed["provider"].startswith("FixedWristSource")
+    assert fixed["position"] == [0.0, 0.0, 0.0] and fixed["quaternion_xyzw"] == [0.0, 0.0, 0.0, 1.0]
+    control = metadata["wrist.fixed_wrist.control"]
+    assert control["maximum_skew_seconds"] == 0.0 and control["articulation_to_wrist"] is None
+    retargeting = metadata["adaptive.quest+fixed_wrist"]
+    assert retargeting["backend"] == "adaptive" and retargeting["hand_model"] == "sharpa"
+    assert retargeting["configuration"]["file"] == "sharpa.yaml"
+    assert retargeting["configuration"]["sha256"] != "unavailable"
+
+
 def test_create_worker_pins_the_wrist_to_the_selected_finger_source():
     args = launcher._parser().parse_args(["--hand-source", "hts"])
     source = _IdleSource()

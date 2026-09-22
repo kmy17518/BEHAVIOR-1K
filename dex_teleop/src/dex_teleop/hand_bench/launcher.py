@@ -4,6 +4,12 @@ The bench accepts an articulation source only (Quest HTS or a MANUS glove).
 Wrist tracking is disabled by construction: the Franka that carries the Sharpa
 hand is hidden and held by a ``NullJointController``, the action space is the
 22 finger joints, and the runtime pins the wrist through ``FixedWristSource``.
+
+With ``--record`` (implied by ``--emg``) the session is written with the same
+HDF5 layout as the ARAT launcher: ``/data/demo_N`` finger actions and simulator
+state, ``/hand_tracking`` native-rate articulation, wrist, and retargeting
+streams, ``/human_hand_pose``, ``/action_timing``, and, with ``--emg``, the
+OYMotion wristband under ``/emg`` with per-action ``/synchronization`` ranges.
 """
 
 from __future__ import annotations
@@ -20,6 +26,7 @@ import traceback
 import numpy as np
 
 from dex_teleop.arat.camera_rig import camera_rig_names, layout_camera_ids, load_camera_rig
+from dex_teleop.emg import ActionTimingSample, EmgSession, emg_staging_path
 from dex_teleop.hand_bench.scene import (
     CAMERA_LAYOUT,
     DEFAULT_CAMERA_RIG,
@@ -32,11 +39,18 @@ from dex_teleop.hand_bench.scene import (
     reset_joint_positions,
     validate_runtime_assets,
 )
+from dex_teleop.omnigibson.hand_pose_recording import HumanHandPoseSample
+from dex_teleop.omnigibson.hand_tracking_recording import HandTrackingRecordingSession
 from dex_teleop.omnigibson.launcher import (
     GracefulShutdown,
+    _camera_layout_panel_dock,
     _configure_camera_layout,
+    _file_fingerprint,
+    _finalize_recording,
     _show_robot_end_effectors,
     _shutdown_omnigibson,
+    _window_name,
+    recording_staging_path,
 )
 from dex_teleop.retargeting import SUPPORTED_RETARGETERS, create_hand_retargeter
 from dex_teleop.runtime import MultiSourceTrackingWorker
@@ -47,15 +61,22 @@ from dex_teleop.tracking import (
     HTSSource,
     SourceUnavailableError,
 )
-from dex_teleop.tracking.manus import ManusIntegratedSource
+from dex_teleop.tracking.manus import (
+    ManusIntegratedSource,
+    default_manus_bridge_path,
+    discover_manus_sdk,
+)
 from dex_teleop.types import Handedness
 
 
 LOGGER = logging.getLogger(__name__)
 HAND_SOURCES = ("quest", "hts", "manus")
+HAND_MODEL = "sharpa"
+HAND_SIDE = "right"
 SCREENSHOT_SETTLE_FRAMES = 90
 ARM_HOLD_TOLERANCE_RAD = 0.05
 WAIT_MESSAGE_INTERVAL_SECONDS = 5.0
+DEFAULT_RECORDING_ROOT = Path(__file__).resolve().parents[3] / "outputs" / "recordings"
 
 # Options of the ARAT launcher that select, calibrate, or tune wrist tracking.
 # They are rejected up front with an explanation instead of argparse's generic
@@ -188,7 +209,90 @@ def _parser() -> argparse.ArgumentParser:
         "--screenshot-dir",
         help="Render every camera of the layout's toggle cycle to PNG in this directory, then exit",
     )
+    parser.add_argument(
+        "--record",
+        action="store_true",
+        help=(
+            "Record finger actions, simulator state, native-rate hand tracking streams, and "
+            "human hand poses to HDF5 (implied by --emg)"
+        ),
+    )
+    parser.add_argument(
+        "--recording-path",
+        help=f"HDF5 destination (default: {DEFAULT_RECORDING_ROOT}/hand_bench_<timestamp>.hdf5)",
+    )
+    parser.add_argument(
+        "--emg",
+        action="store_true",
+        help="Record synchronized native-rate OYMotion EMG and show it in a docked Kit window",
+    )
+    parser.add_argument(
+        "--emg-device",
+        help="OYMotion device name substring or Bluetooth address (auto-selects when exactly one is found)",
+    )
+    parser.add_argument(
+        "--emg-adapter",
+        default="hci0",
+        help="Linux Bluetooth adapter used by the Synchroni SDK (default: hci0)",
+    )
+    parser.add_argument(
+        "--emg-sdk-path",
+        help="Path containing the Synchroni SDK's sensor package if it is not installed in behavior_dex",
+    )
+    parser.add_argument(
+        "--emg-hpf",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Explicitly enable or disable the firmware 0.5 Hz HPF (default: enabled)",
+    )
+    parser.add_argument(
+        "--emg-lpf",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Explicitly enable or disable the firmware 80 Hz LPF (default: enabled)",
+    )
+    parser.add_argument(
+        "--emg-notch",
+        choices=("off", "50", "60", "both"),
+        default=None,
+        help="Explicit firmware mains-notch selection (default: 60)",
+    )
+    parser.add_argument("--emg-scan-ms", type=int, default=5000)
+    parser.add_argument("--emg-connect-timeout", type=float, default=45.0)
+    parser.add_argument(
+        "--no-emg-display",
+        action="store_true",
+        help="Record EMG without creating the docked waveform window",
+    )
+    parser.add_argument(
+        "--visualize-decoder",
+        action="store_true",
+        help="Decode EMG with VEMG2Pose and show the hand in a docked window",
+    )
+    parser.add_argument(
+        "--display",
+        choices=("decoder",),
+        help="Display an optional panel; 'decoder' is an alias for --visualize-decoder",
+    )
+    parser.add_argument(
+        "--emg2pose-root",
+        help="emg2pose checkout (defaults to the emg2pose directory beside this repository)",
+    )
+    parser.add_argument("--emg2pose-checkpoint", help="VEMG2Pose checkpoint; defaults inside --emg2pose-root")
+    parser.add_argument("--emg2pose-device", help="Torch decoder device: auto, cpu, cuda, or cuda:N (default: auto)")
+    parser.add_argument(
+        "--emg2pose-inference-hz",
+        type=float,
+        help="Target decoded-hand update rate (default: 5 Hz; 10-15 Hz is practical on CUDA)",
+    )
     return parser
+
+
+def default_recording_path(now: float | None = None) -> Path:
+    """Timestamped default so successive bench sessions never overwrite each other."""
+
+    stamp = time.strftime("%Y%m%d_%H%M%S", time.localtime(now))
+    return DEFAULT_RECORDING_ROOT / f"hand_bench_{stamp}.hdf5"
 
 
 def _validate_args(args) -> None:
@@ -229,6 +333,41 @@ def _validate_args(args) -> None:
         raise SystemExit("--manus-core-host and --manus-loopback-only require --manus-mode remote")
     if args.view_only and args.screenshot_dir is not None:
         raise SystemExit("--screenshot-dir already implies a tracking-free load; drop --view-only")
+    if args.display == "decoder":
+        args.visualize_decoder = True
+    if args.emg:
+        args.record = True
+    if not args.emg and (
+        args.emg_device is not None
+        or args.emg_sdk_path is not None
+        or args.no_emg_display
+        or args.visualize_decoder
+        or args.emg_hpf is not None
+        or args.emg_lpf is not None
+        or args.emg_notch is not None
+        or args.emg2pose_root is not None
+        or args.emg2pose_checkpoint is not None
+        or args.emg2pose_device is not None
+        or args.emg2pose_inference_hz is not None
+    ):
+        raise SystemExit("EMG device, SDK, filter, display, and decoder options require --emg")
+    if args.visualize_decoder and args.no_emg_display:
+        raise SystemExit("--visualize-decoder requires the EMG display; remove --no-emg-display")
+    if not args.visualize_decoder and (
+        args.emg2pose_root is not None
+        or args.emg2pose_checkpoint is not None
+        or args.emg2pose_device is not None
+        or args.emg2pose_inference_hz is not None
+    ):
+        raise SystemExit("emg2pose path and device options require --visualize-decoder")
+    if args.emg2pose_inference_hz is not None and args.emg2pose_inference_hz <= 0:
+        raise SystemExit("--emg2pose-inference-hz must be positive")
+    if args.emg_scan_ms <= 0 or args.emg_connect_timeout <= 0:
+        raise SystemExit("EMG scan and connection timeouts must be positive")
+    if args.recording_path is not None and not args.record:
+        raise SystemExit("--recording-path requires --record or --emg")
+    if args.record and (args.view_only or args.screenshot_dir is not None):
+        raise SystemExit("--record and --emg need live finger tracking; drop --view-only / --screenshot-dir")
 
 
 def _force_data_path() -> Path:
@@ -391,7 +530,132 @@ def _hold_reset_pose(robot, reset_positions) -> None:
     robot.keep_still()
 
 
-def run_bench(scene: HandBenchScene, args, worker: MultiSourceTrackingWorker | None, shutdown: GracefulShutdown) -> None:
+def create_emg_session(args, recording_path: Path) -> EmgSession:
+    """Configure the OYMotion sidecar exactly as the ARAT launcher does."""
+
+    return EmgSession(
+        emg_staging_path(recording_path),
+        device=args.emg_device,
+        adapter=args.emg_adapter,
+        sdk_path=args.emg_sdk_path,
+        scan_ms=args.emg_scan_ms,
+        filter_hpf=True if args.emg_hpf is None else args.emg_hpf,
+        filter_lpf=True if args.emg_lpf is None else args.emg_lpf,
+        filter_notch=args.emg_notch or "60",
+        visualize_decoder=args.visualize_decoder,
+        emg2pose_root=args.emg2pose_root,
+        emg2pose_checkpoint=args.emg2pose_checkpoint,
+        decoder_device=args.emg2pose_device or "auto",
+        decoder_hand=HAND_SIDE,
+        decoder_inference_hz=args.emg2pose_inference_hz or 5.0,
+    )
+
+
+def set_recording_metadata(session: HandTrackingRecordingSession, worker: MultiSourceTrackingWorker, args) -> None:
+    """Attach provenance for the finger source, the fixed wrist, and the retargeter."""
+
+    source_key = worker.articulation_source
+    fixed_source = worker.sources[source_key]
+    if not isinstance(fixed_source, FixedWristSource):
+        raise TypeError("The hand bench worker must wrap its finger source in FixedWristSource")
+    articulation: dict[str, object] = {"registry_key": source_key}
+    if source_key == "quest":
+        articulation.update(
+            {
+                "provider": "Quest Hand Tracking Streamer",
+                "endpoint": f"{args.protocol}://{args.host}:{args.port}",
+            }
+        )
+    elif source_key == "manus":
+        try:
+            resolved_sdk_root = str(discover_manus_sdk(args.manus_sdk_root, mode=args.manus_mode).root)
+        except SourceUnavailableError:
+            resolved_sdk_root = "unavailable"
+        articulation.update(
+            {
+                **fixed_source.articulation_source.recording_metadata(),
+                "requested_sdk_root": str(Path(args.manus_sdk_root).expanduser()),
+                "resolved_sdk_root": resolved_sdk_root,
+                "bridge": _file_fingerprint(args.manus_bridge or default_manus_bridge_path(args.manus_mode)),
+                "glove_calibration": _file_fingerprint(args.manus_calibration),
+            }
+        )
+    session.set_stream_metadata(worker.articulation_streams[source_key], articulation)
+    session.set_stream_metadata(
+        worker.wrist_streams[worker.wrist_source],
+        {
+            "registry_key": worker.wrist_source,
+            "provider": "FixedWristSource: wrist held by the simulator, device wrist discarded",
+            "articulation_source": source_key,
+            "position": fixed_source.position.tolist(),
+            "quaternion_xyzw": fixed_source.quaternion_xyzw.tolist(),
+        },
+    )
+    session.set_stream_metadata(
+        worker.control_wrist_stream,
+        {
+            "provider": "same-callback identity pairing",
+            "native_stream": worker.wrist_streams[worker.wrist_source],
+            "maximum_skew_seconds": 0.0,
+            "interpolation": "none; exact source frame/time identity",
+            "articulation_to_wrist": None,
+        },
+    )
+    suffix = f"{HAND_MODEL}_{HAND_SIDE}_dexpilot.yaml" if args.retargeter == "dexpilot" else f"{HAND_MODEL}.yaml"
+    config_path = Path(__file__).resolve().parents[1] / "retargeting" / "configs" / suffix
+    session.set_stream_metadata(
+        worker.retargeting_stream,
+        {
+            "backend": args.retargeter,
+            "hand_model": HAND_MODEL,
+            "handedness": HAND_SIDE,
+            "configuration": _file_fingerprint(config_path),
+        },
+    )
+
+
+def _create_emg_monitor(env, emg_session: EmgSession, args):
+    """Dock the waveform (and optional decoder) panels where the camera rig says."""
+
+    import omnigibson as og
+    from omnigibson.macros import gm
+
+    from dex_teleop.emg.ui import create_emg_monitor
+
+    default_parent = "DockSpace" if gm.HEADLESS else _window_name(env._arat_camera_viewports["main"])
+    emg_parent, emg_position, emg_ratio = _camera_layout_panel_dock(
+        env, "emg", default_parent=default_parent, default_position="right", default_ratio=0.35
+    )
+    decoder_parent, decoder_position, decoder_ratio = _camera_layout_panel_dock(
+        env, "decoder", default_parent="OYMotion EMG", default_position="bottom", default_ratio=0.5
+    )
+    monitor = create_emg_monitor(
+        emg_session,
+        dock_parent_name=emg_parent,
+        dock_position=emg_position,
+        dock_ratio=emg_ratio,
+        enabled=not args.no_emg_display,
+        visualize_decoder=args.visualize_decoder,
+        decoder_hand=HAND_SIDE,
+        decoder_dock_parent_name=decoder_parent,
+        decoder_dock_position=decoder_position,
+        decoder_dock_ratio=decoder_ratio,
+    )
+    if monitor is not None:
+        monitor.update(force=True)
+        og.sim.render()
+    return monitor
+
+
+def run_bench(
+    scene: HandBenchScene,
+    args,
+    worker: MultiSourceTrackingWorker | None,
+    shutdown: GracefulShutdown,
+    *,
+    recording_path: Path | None = None,
+    emg_session: EmgSession | None = None,
+) -> None:
     import omnigibson as og
     import omnigibson.lazy as lazy
     import torch as th
@@ -403,6 +667,10 @@ def run_bench(scene: HandBenchScene, args, worker: MultiSourceTrackingWorker | N
         SharpaFingerAdapterConfig,
     )
 
+    if recording_path is not None and worker is None:
+        raise ValueError("Recording requires a tracking worker")
+    if emg_session is not None and recording_path is None:
+        raise ValueError("EMG acquisition requires a recording path")
     screenshot_dir = None if args.screenshot_dir is None else Path(args.screenshot_dir).expanduser()
     headless = os.environ.get("OMNIGIBSON_HEADLESS") == "1"
     config = build_hand_bench_config(
@@ -414,12 +682,57 @@ def run_bench(scene: HandBenchScene, args, worker: MultiSourceTrackingWorker | N
     print(f"\nLoading the Sharpa hand bench (camera rig: {args.camera_rig})")
     env = og.Environment(configs=config)
     shutdown.install()
-    env.reset()
+
+    recording_env = None
+    staging_path = None
+    hand_pose_episodes: list[list[HumanHandPoseSample]] | None = None
+    action_timing_episodes: list[list[ActionTimingSample]] | None = None
+    hand_tracking_session: HandTrackingRecordingSession | None = None
+    if recording_path is not None:
+        from omnigibson.envs import HDF5CollectionWrapper
+
+        recording_path.parent.mkdir(parents=True, exist_ok=True)
+        staging_path = recording_staging_path(recording_path)
+        # JoyLo's state/action trajectory wrapper, as in the ARAT launcher.
+        recording_env = HDF5CollectionWrapper(
+            env=env,
+            output_path=str(staging_path),
+            viewport_camera_path=None,
+            only_successes=False,
+            flush_every_n_traj=1,
+            keep_checkpoint_rollback_data=True,
+        )
+        env = recording_env
+        hand_pose_episodes = []
+        action_timing_episodes = []
+        hand_tracking_session = HandTrackingRecordingSession()
+        set_recording_metadata(hand_tracking_session, worker, args)
+        worker.set_recording_session(hand_tracking_session)
+        print(
+            f"Recording to {recording_path} (staging: {staging_path.name}): /data finger actions and state, "
+            "/hand_tracking native streams, /human_hand_pose, /action_timing"
+            + (", /emg and /synchronization" if emg_session is not None else "")
+        )
+
+    reset_positions = th.tensor(reset_joint_positions(scene), dtype=th.float32)
+
+    def begin_episode(robot=None) -> None:
+        env.reset()
+        if hand_pose_episodes is not None:
+            hand_pose_episodes.append([])
+        if action_timing_episodes is not None:
+            action_timing_episodes.append([])
+        if hand_tracking_session is not None:
+            hand_tracking_session.begin_episode()
+        if robot is not None:
+            _hold_reset_pose(robot, reset_positions)
+            _show_robot_end_effectors(robot)
+
+    begin_episode()
     robot = env.robots[0]
     table = env.scene.object_registry("name", TABLE_NAME)
     if table is None:
         raise RuntimeError("Hand bench scene did not load its table")
-    reset_positions = th.tensor(reset_joint_positions(scene), dtype=th.float32)
     _hold_reset_pose(robot, reset_positions)
     for _ in range(10):
         og.sim.step()
@@ -446,87 +759,197 @@ def run_bench(scene: HandBenchScene, args, worker: MultiSourceTrackingWorker | N
             steps += 1
         return
 
-    source_label = _canonical_hand_source(args.hand_source)
-    adapter = SharpaFingerActionAdapter(
-        robot,
-        config=SharpaFingerAdapterConfig(control_hz=30.0, finger_target_scale=args.finger_target_scale),
-    )
-    control = {"engaged": True, "pending": None}
-
-    def request_toggle():
-        control["pending"] = "toggle"
-
-    def request_reset():
-        control["pending"] = "reset"
-
-    if not gm.HEADLESS:
-        KeyboardEventHandler.add_keyboard_callback(lazy.carb.input.KeyboardInput.SPACE, request_toggle)
-        KeyboardEventHandler.add_keyboard_callback(lazy.carb.input.KeyboardInput.R, request_reset)
-    print(
-        f"Waiting for the first {source_label} hand frame (wrist tracking disabled; fingers only). "
-        "Press SPACE to pause/resume, R to reopen the hand, B to switch views; Ctrl+C exits."
-    )
-    started = time.monotonic()
-    last_wait_message = started
-    live = False
-    holding_stale = False
+    emg_monitor = None
+    primary_error: BaseException | None = None
     applied = 0
-    while (args.steps <= 0 or steps < args.steps) and not shutdown.requested:
-        pending = control["pending"]
-        control["pending"] = None
-        if pending == "toggle":
-            control["engaged"] = not control["engaged"]
-            print("Finger tracking resumed" if control["engaged"] else "Finger tracking paused; the hand holds its pose")
-        elif pending == "reset":
-            worker.reset()
-            _hold_reset_pose(robot, reset_positions)
-            adapter.reset()
-            print("Hand reopened; the next frame drives the fingers again")
-        worker.check_health()
-        snapshot = worker.snapshot()
-        now = time.monotonic()
-        if snapshot is None:
-            if now - started > args.initial_frame_timeout:
-                raise SourceUnavailableError(
-                    f"No {source_label} hand articulation received within {args.initial_frame_timeout:.0f}s"
+    try:
+        if emg_session is not None:
+            emg_monitor = _create_emg_monitor(env, emg_session, args)
+        source_label = _canonical_hand_source(args.hand_source)
+        adapter = SharpaFingerActionAdapter(
+            robot,
+            config=SharpaFingerAdapterConfig(control_hz=30.0, finger_target_scale=args.finger_target_scale),
+        )
+        control = {"engaged": True, "pending": None}
+
+        def request_toggle():
+            control["pending"] = "toggle"
+
+        def request_reset():
+            control["pending"] = "reset"
+
+        if not gm.HEADLESS:
+            KeyboardEventHandler.add_keyboard_callback(lazy.carb.input.KeyboardInput.SPACE, request_toggle)
+            KeyboardEventHandler.add_keyboard_callback(lazy.carb.input.KeyboardInput.R, request_reset)
+        reset_hint = "R starts a new episode with an open hand" if recording_env is not None else "R reopens the hand"
+        print(
+            f"Waiting for the first {source_label} hand frame (wrist tracking disabled; fingers only). "
+            f"Press SPACE to pause/resume, {reset_hint}, B to switch views; Ctrl+C exits."
+        )
+        started = time.monotonic()
+        last_wait_message = started
+        live = False
+        holding_stale = False
+
+        def idle_step() -> None:
+            og.sim.step()
+            if emg_monitor is not None:
+                emg_monitor.update()
+
+        while (args.steps <= 0 or steps < args.steps) and not shutdown.requested:
+            pending = control["pending"]
+            control["pending"] = None
+            if pending == "toggle":
+                control["engaged"] = not control["engaged"]
+                print(
+                    "Finger tracking resumed"
+                    if control["engaged"]
+                    else "Finger tracking paused; the hand holds its pose"
                 )
-            if now - last_wait_message >= WAIT_MESSAGE_INTERVAL_SECONDS:
-                print(f"Still waiting for {source_label} hand tracking...")
-                last_wait_message = now
-            _hold_reset_pose(robot, reset_positions)
-            og.sim.step()
-            steps += 1
-            continue
-        if not live:
-            live = True
-            print(f"Hand tracking live: the Sharpa fingers follow the {source_label} articulation")
-        frame_age = now - snapshot.observation.articulation.receipt_timestamp
-        if frame_age > args.maximum_frame_age:
-            if args.stale_frame_policy == "error":
-                raise SourceUnavailableError(
-                    f"{source_label} articulation is stale ({frame_age:.3f}s > {args.maximum_frame_age:.3f}s)"
+            elif pending == "reset":
+                worker.reset()
+                begin_episode(robot)
+                adapter.reset()
+                print(
+                    f"Episode {len(hand_pose_episodes)} started; hand reopened"
+                    if hand_pose_episodes is not None
+                    else "Hand reopened; the next frame drives the fingers again"
                 )
-            if not holding_stale:
-                print(f"{source_label} articulation is stale; holding the last finger pose")
-                holding_stale = True
-            og.sim.step()
+            worker.check_health()
+            if emg_session is not None:
+                emg_session.check_health()
+            snapshot = worker.snapshot()
+            now = time.monotonic()
+            if snapshot is None:
+                if now - started > args.initial_frame_timeout:
+                    raise SourceUnavailableError(
+                        f"No {source_label} hand articulation received within {args.initial_frame_timeout:.0f}s"
+                    )
+                if now - last_wait_message >= WAIT_MESSAGE_INTERVAL_SECONDS:
+                    print(f"Still waiting for {source_label} hand tracking...")
+                    last_wait_message = now
+                _hold_reset_pose(robot, reset_positions)
+                idle_step()
+                steps += 1
+                continue
+            if not live:
+                live = True
+                print(f"Hand tracking live: the Sharpa fingers follow the {source_label} articulation")
+            frame_age = now - snapshot.observation.articulation.receipt_timestamp
+            if frame_age > args.maximum_frame_age:
+                if args.stale_frame_policy == "error":
+                    raise SourceUnavailableError(
+                        f"{source_label} articulation is stale ({frame_age:.3f}s > {args.maximum_frame_age:.3f}s)"
+                    )
+                if not holding_stale:
+                    print(f"{source_label} articulation is stale; holding the last finger pose")
+                    holding_stale = True
+                idle_step()
+                steps += 1
+                continue
+            if holding_stale:
+                print(f"{source_label} articulation resumed")
+                holding_stale = False
+            if not control["engaged"]:
+                idle_step()
+                steps += 1
+                continue
+            action = adapter.action(snapshot)
+            sim_time_before_s = float(og.sim.current_time)
+            action_apply_monotonic_ns = time.monotonic_ns()
+            env.step(action)
+            step_return_monotonic_ns = time.monotonic_ns()
+            sim_time_after_s = float(og.sim.current_time)
+            if action_timing_episodes is not None:
+                action_timing_episodes[-1].append(
+                    ActionTimingSample(
+                        action_apply_monotonic_ns=action_apply_monotonic_ns,
+                        step_return_monotonic_ns=step_return_monotonic_ns,
+                        sim_time_before_s=sim_time_before_s,
+                        sim_time_after_s=sim_time_after_s,
+                    )
+                )
+            if hand_pose_episodes is not None:
+                # The fixed wrist never carries HTS raw values, so raw_available stays false.
+                hand_pose_episodes[-1].append(HumanHandPoseSample.capture(snapshot.frame))
+            if hand_tracking_session is not None:
+                selection = snapshot.action_selection()
+                if selection is None:
+                    raise RuntimeError("Snapshot is missing hand-tracking recording provenance")
+                hand_tracking_session.append_action_selection(selection)
+            if emg_monitor is not None:
+                emg_monitor.update()
+            applied += 1
             steps += 1
-            continue
-        if holding_stale:
-            print(f"{source_label} articulation resumed")
-            holding_stale = False
-        if not control["engaged"]:
-            og.sim.step()
-            steps += 1
-            continue
-        env.step(adapter.action(snapshot))
-        applied += 1
-        steps += 1
-    measured = adapter.measured_fingers
-    print(
-        f"Hand bench stopped after {steps} steps; {applied} finger actions applied; "
-        f"measured finger joints span {min(measured.values()):.2f} to {max(measured.values()):.2f} rad"
-    )
+        measured = adapter.measured_fingers
+        print(
+            f"Hand bench stopped after {steps} steps; {applied} finger actions applied; "
+            f"measured finger joints span {min(measured.values()):.2f} to {max(measured.values()):.2f} rad"
+        )
+    except BaseException as error:
+        primary_error = error
+        raise
+    finally:
+        cleanup_errors: list[tuple[str, BaseException]] = []
+        if emg_monitor is not None:
+            try:
+                emg_monitor.close()
+            except BaseException as error:
+                cleanup_errors.append(("EMG monitor", error))
+        recorder_error: BaseException | None = None
+        finalization_error: BaseException | None = None
+        if recording_env is not None:
+            try:
+                worker.set_recording_session(None, timeout=10.0)
+                hand_tracking_session.close()
+            except BaseException as error:
+                recorder_error = error
+            if recorder_error is None:
+                try:
+                    _finalize_recording(
+                        recording_env=recording_env,
+                        staging_path=staging_path,
+                        output_path=recording_path,
+                        hand_pose_episodes=hand_pose_episodes,
+                        action_timing_episodes=action_timing_episodes,
+                        emg_session=emg_session,
+                        hand_tracking_session=hand_tracking_session,
+                        # Without an episode there is no trajectory to publish; keep the
+                        # staging file for diagnosis instead of replacing a prior recording.
+                        publish=primary_error is None or bool(hand_pose_episodes),
+                    )
+                except BaseException as error:
+                    finalization_error = error
+            else:
+                try:
+                    recording_env.save_data()
+                except BaseException as error:
+                    finalization_error = error
+        messages = [f"Could not close {label}: {error}" for label, error in cleanup_errors]
+        if recorder_error is not None:
+            messages.append(f"Could not quiesce the hand-tracking recorder: {recorder_error}")
+        if finalization_error is not None:
+            messages.append(f"Recording finalization failed: {finalization_error}")
+        if primary_error is not None:
+            for message in messages:
+                primary_error.add_note(message)
+                LOGGER.error(message)
+        elif recorder_error is not None:
+            failure = RuntimeError(f"Could not quiesce the hand-tracking recorder: {recorder_error}")
+            for message in messages:
+                if not message.startswith("Could not quiesce"):
+                    failure.add_note(message)
+            raise failure from recorder_error
+        elif finalization_error is not None:
+            for message in messages:
+                if not message.startswith("Recording finalization failed"):
+                    finalization_error.add_note(message)
+            raise finalization_error
+        elif cleanup_errors:
+            failure = RuntimeError("Hand bench resources failed to close cleanly")
+            for message in messages:
+                failure.add_note(message)
+            raise failure from cleanup_errors[0][1]
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -559,14 +982,33 @@ def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO)
 
     tracking_enabled = not args.view_only and args.screenshot_dir is None
+    recording_path = None
+    if args.record and tracking_enabled:
+        recording_path = Path(args.recording_path).expanduser() if args.recording_path else default_recording_path()
     worker = None
+    emg_session = None
     shutdown = GracefulShutdown()
     launcher_error: BaseException | None = None
     try:
+        if args.emg:
+            # Establish the Bluetooth connection before the long Isaac Sim startup.
+            emg_session = create_emg_session(args, recording_path)
+            print(f"Starting OYMotion EMG acquisition (staging: {emg_session.output_path.name})")
+            emg_session.start(timeout=args.emg_connect_timeout)
+            print(
+                f"EMG ready: {emg_session.metadata.get('device_name', 'OYMotion')} | "
+                f"{emg_session.channel_count} ch @ {emg_session.sample_rate_hz:g} Hz"
+            )
+            print(f"EMG firmware filters: {emg_session.metadata.get('filter_configuration', 'unknown')}")
+            if args.visualize_decoder:
+                print(
+                    f"EMG2Pose target: {emg_session.metadata.get('decoder_inference_hz_target', 5.0):g} Hz | "
+                    f"device: {emg_session.metadata.get('decoder_device', 'unknown')}"
+                )
         if tracking_enabled:
             worker = create_worker(args)
             worker.start()
-        run_bench(scene, args, worker, shutdown)
+        run_bench(scene, args, worker, shutdown, recording_path=recording_path, emg_session=emg_session)
     except KeyboardInterrupt:
         print("\nStopping the Sharpa hand bench")
     except BaseException as error:
@@ -580,6 +1022,7 @@ def main(argv: list[str] | None = None) -> None:
         cleanup_errors: list[tuple[str, BaseException]] = []
         for label, close in (
             ("tracking worker", None if worker is None else worker.close),
+            ("EMG session", None if emg_session is None else emg_session.close),
             ("OmniGibson", lambda: _shutdown_omnigibson(og)),
         ):
             if close is None:

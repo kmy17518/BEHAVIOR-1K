@@ -116,3 +116,10 @@ camera_rigs:
           - key: B
             viewport: main
             cameras: [dorsal, palmar]
+        panels:
+          # --emg docks the OYMotion waveform monitor beside the main view and the
+          # optional EMG2Pose decoder below it (parent is that window's title).
+          emg:
+            dock: {parent: main, position: right, ratio: 0.35}
+          decoder:
+            dock: {parent: OYMotion EMG, position: bottom, ratio: 0.5}
