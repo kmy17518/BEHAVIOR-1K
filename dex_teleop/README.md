@@ -200,8 +200,10 @@ python dex_teleop/scripts/launch_hand_bench.py \
 The OYMotion band is driven by the OYMotion Synchroni Python SDK, which
 `setup.sh` does not install. Use our fork (branch `my`; it adds the
 `SYNCHRONI_BLE_ADAPTER` adapter selection and connection-recovery fixes the
-sidecar relies on) and install it without its dependency pins so `bleak` stays
-at the 3.x version the sidecar was validated with:
+sidecar relies on). Install it with `--no-deps`: its `setup.py` currently pins
+`bleak<2`, whereas the EMG path was only validated with `bleak 3.0.2` (what
+`behavior_dex` runs). bleak 2.x scans fine with the fork but streaming has not
+been verified on it, and 1.x is untested.
 
 ```bash
 git clone --branch my https://github.com/13RENDA/synchroni-sensor-sdk.git ../synchroni-sensor-sdk
