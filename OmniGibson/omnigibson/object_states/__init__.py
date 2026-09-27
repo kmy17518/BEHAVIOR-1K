@@ -1,5 +1,5 @@
 from omnigibson.object_states.aabb import AABB
-from omnigibson.object_states.adjacency import HorizontalAdjacency, VerticalAdjacency
+from omnigibson.object_states.adjacency import Adjacency
 from omnigibson.object_states.attached_to import AttachedTo
 from omnigibson.object_states.burnt import Burnt
 from omnigibson.object_states.contact_particles import ContactParticles
@@ -39,6 +39,7 @@ from omnigibson.object_states.under import Under
 
 __all__ = [
     "AABB",
+    "Adjacency",
     "AttachedTo",
     "Burnt",
     "ContactParticles",
@@ -54,7 +55,6 @@ __all__ = [
     "Grasped",
     "Heated",
     "HeatSourceOrSink",
-    "HorizontalAdjacency",
     "Inside",
     "IsGrasping",
     "Joint",
@@ -83,5 +83,4 @@ __all__ = [
     "Touching",
     "Under",
     "Unfolded",
-    "VerticalAdjacency",
 ]
