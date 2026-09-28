@@ -215,6 +215,11 @@ gm.ENABLE_TRANSITION_RULES = True
 # workloads that never read is_active can turn it off (states that act on changes, e.g. ToggledOn's markers, keep it).
 gm.TRACK_STATE_UPDATES = os.getenv("OMNIGIBSON_TRACK_STATE_UPDATES", "1").lower() not in ("0", "false", "f")
 
+# Run that change detection (the previous-value copy, the comparison and its per-object reduction) with numpy instead of
+# torch CPU ops. Same result (exact comparisons); without torch's intra-op thread pool, whose parallel regions made these
+# small tensors cost ~75 ms of a ~160 ms step on a busy 8-CPU allocation (numpy: < 1 ms).
+gm.CHANGE_DETECTION_NUMPY = os.getenv("OMNIGIBSON_CHANGE_DETECTION_NUMPY", "0").lower() in ("1", "true", "t")
+
 # Default settings for the omni UI viewer
 gm.DEFAULT_VIEWER_WIDTH = 1280
 gm.DEFAULT_VIEWER_HEIGHT = 720

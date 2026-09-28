@@ -1,3 +1,4 @@
+import numpy as np
 import torch as th
 import warp as wp
 
@@ -132,7 +133,10 @@ class TensorizedState:
         if cls.VALUES_CPU is None or cls.VALUES_CPU.numel() == 0:
             return
         if gm.TRACK_STATE_UPDATES or cls.post_update.__func__ is not TensorizedState.post_update.__func__:
-            cls.PREV_VALUES.copy_(cls.VALUES_CPU)
+            if gm.CHANGE_DETECTION_NUMPY:
+                np.copyto(cls.PREV_VALUES.numpy(), cls.VALUES_CPU.numpy())
+            else:
+                cls.PREV_VALUES.copy_(cls.VALUES_CPU)
 
         if cls._dt is not None:
             cls._dt.fill_(dt)
@@ -172,18 +176,31 @@ class TensorizedState:
         """
         if not gm.TRACK_STATE_UPDATES or cls.VALUES_CPU is None or cls.VALUES_CPU.numel() == 0:
             return
-        S = cls.VALUES_CPU.shape[0]
-
-        diff = cls.VALUES_CPU != cls.PREV_VALUES
-        changed_mask = th.any(diff, dim=tuple(range(2, diff.ndim))) if diff.ndim > 2 else diff
-        for s_idx in range(S):
-            for obj_idx in th.where(changed_mask[s_idx])[0].tolist():
+        for s_idx, obj_idxs in enumerate(cls.changed_rows()):
+            for obj_idx in obj_idxs:
                 obj = cls.IDX_OBJS[s_idx][obj_idx]
                 if obj is None:
                     # Column vacated in this scene (e.g. mid-play object removal) but kept
                     # alive by another scene sharing the relative prim path — see IDX_OBJS.
                     continue
                 obj.state_updated()
+
+    @classmethod
+    def changed_rows(cls):
+        """
+        Per scene, the object indices whose values differ between VALUES_CPU and PREV_VALUES (any element of the object's
+        value; for relative states, of its row).
+
+        Returns:
+            list of list of int: changed_rows()[scene_idx] = changed object indices, ascending
+        """
+        if gm.CHANGE_DETECTION_NUMPY:
+            diff = np.not_equal(cls.VALUES_CPU.numpy(), cls.PREV_VALUES.numpy())
+            changed_mask = diff.any(axis=tuple(range(2, diff.ndim))) if diff.ndim > 2 else diff
+            return [np.flatnonzero(changed_mask[s_idx]).tolist() for s_idx in range(changed_mask.shape[0])]
+        diff = cls.VALUES_CPU != cls.PREV_VALUES
+        changed_mask = th.any(diff, dim=tuple(range(2, diff.ndim))) if diff.ndim > 2 else diff
+        return [th.where(changed_mask[s_idx])[0].tolist() for s_idx in range(changed_mask.shape[0])]
 
     @classmethod
     def _update_values(cls, values):

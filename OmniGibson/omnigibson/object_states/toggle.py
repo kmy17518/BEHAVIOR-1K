@@ -667,10 +667,8 @@ class ToggledOn(TensorizedAbsoluteState, BooleanStateMixin, LinkBasedStateMixin)
         """
         if cls.VALUES_CPU is None or cls.VALUES_CPU.numel() == 0:
             return
-        diff = cls.VALUES_CPU != cls.PREV_VALUES
-        changed_mask = th.any(diff, dim=tuple(range(2, diff.ndim))) if diff.ndim > 2 else diff
-        for s_idx in range(cls.VALUES_CPU.shape[0]):
-            for obj_idx in th.where(changed_mask[s_idx])[0].tolist():
+        for s_idx, obj_idxs in enumerate(cls.changed_rows()):
+            for obj_idx in obj_idxs:
                 obj = cls.IDX_OBJS[s_idx][obj_idx]
                 if obj is None:
                     # Column vacated in this scene (e.g. mid-play object removal) but kept
