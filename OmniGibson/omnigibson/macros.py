@@ -210,6 +210,11 @@ gm.ENABLE_OBJECT_STATES = True
 # Whether to enable transition rules or not
 gm.ENABLE_TRANSITION_RULES = True
 
+# Whether tensorized states record which objects' values changed each step (scene.updated_state_objects, read by
+# BaseObject.is_active). The change detection copies and compares every state's full value tensor on the CPU each step;
+# workloads that never read is_active can turn it off (states that act on changes, e.g. ToggledOn's markers, keep it).
+gm.TRACK_STATE_UPDATES = os.getenv("OMNIGIBSON_TRACK_STATE_UPDATES", "1").lower() not in ("0", "false", "f")
+
 # Default settings for the omni UI viewer
 gm.DEFAULT_VIEWER_WIDTH = 1280
 gm.DEFAULT_VIEWER_HEIGHT = 720

@@ -1,6 +1,7 @@
 import torch as th
 import warp as wp
 
+from omnigibson.macros import gm
 from omnigibson.utils.python_utils import classproperty
 from omnigibson.utils.ui_utils import create_module_logger
 
@@ -130,7 +131,8 @@ class TensorizedState:
         """
         if cls.VALUES_CPU is None or cls.VALUES_CPU.numel() == 0:
             return
-        cls.PREV_VALUES.copy_(cls.VALUES_CPU)
+        if gm.TRACK_STATE_UPDATES or cls.post_update.__func__ is not TensorizedState.post_update.__func__:
+            cls.PREV_VALUES.copy_(cls.VALUES_CPU)
 
         if cls._dt is not None:
             cls._dt.fill_(dt)
@@ -168,7 +170,7 @@ class TensorizedState:
         - Relative (S, N, N, *value_shape): reduces over (other-obj, *value_shape) dims to get per-(scene, self-obj)
           row mask. A pairwise-cell change fires state_updated() once on the row's self-object.
         """
-        if cls.VALUES_CPU is None or cls.VALUES_CPU.numel() == 0:
+        if not gm.TRACK_STATE_UPDATES or cls.VALUES_CPU is None or cls.VALUES_CPU.numel() == 0:
             return
         S = cls.VALUES_CPU.shape[0]
 
