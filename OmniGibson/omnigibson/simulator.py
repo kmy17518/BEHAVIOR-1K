@@ -478,6 +478,7 @@ def _launch_simulator(*args, **kwargs):
             # USD edit guard: detects edits outside editing_usd() context
             self._editing_usd = False
             self._editing_usd_caller = None
+            self._usd_edit_batch = False
             self._in_sim_lifecycle = 0
             self._deferred_usd_guard_error = None
             self._usd_guard_enabled = False
@@ -1756,7 +1757,9 @@ def _launch_simulator(*args, **kwargs):
                 yield
                 return
 
-            caller = traceback.extract_stack(limit=3)[0]
+            # Inside batched_usd_edits(), the synchronization happens once when that scope exits
+            batched = self._usd_edit_batch
+            caller = None if batched else traceback.extract_stack(limit=3)[0]
             assert not self._editing_usd, (
                 f"Cannot nest editing_usd() contexts. All USD edits for a logical operation "
                 f"should be in a single editing_usd() block.\n"
@@ -1765,13 +1768,36 @@ def _launch_simulator(*args, **kwargs):
             self._check_usd_guard()
             assert not self.currently_in_isaac_step, "Cannot edit USD while simulation is stepping!"
             self._editing_usd = True
-            self._editing_usd_caller = f"{caller.filename}:{caller.lineno} in {caller.name}"
+            self._editing_usd_caller = (
+                "batched_usd_edits()" if batched else f"{caller.filename}:{caller.lineno} in {caller.name}"
+            )
             try:
                 yield
             finally:
                 self._editing_usd = False
                 self._editing_usd_caller = None
+                if not batched:
+                    self.usdrt_stage.SynchronizeToFabric()
+
+        @contextlib.contextmanager
+        def batched_usd_edits(self):
+            """
+            Context manager deferring the Fabric synchronization of every editing_usd() block inside it to its own exit:
+            one SynchronizeToFabric and one Fabric world-transform update for many small edits, e.g. a scene state load
+            (~150 editing_usd() blocks, each a full stage synchronization). Code inside must not rely on Fabric
+            reflecting a USD edit made earlier in the same scope: a prim's Fabric pose reads as it was when the scope
+            opened until the scope exits (a scene state load reads each object's pose only before editing it).
+            """
+            assert (
+                not self._editing_usd and not self._usd_edit_batch
+            ), "batched_usd_edits() cannot be nested or opened inside editing_usd()"
+            self._usd_edit_batch = True
+            try:
+                yield
+            finally:
+                self._usd_edit_batch = False
                 self.usdrt_stage.SynchronizeToFabric()
+                self.fabric_hierarchy.update_world_xforms()
 
         def _enable_usd_guard(self):
             """Enable the guard that detects USD edits outside editing_usd() context."""
