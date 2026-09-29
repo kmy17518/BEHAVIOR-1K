@@ -119,6 +119,13 @@ class Scene(Serializable, Registerable, Recreatable, ABC):
             else:
                 scene_info = self.scene_file
 
+            # Loading assumes scene-frame poses: objects are created at them (_load_scene_prim_with_objects) and
+            # initialize() applies this scene's pose on top. A file saved while its scene sat elsewhere (env k >= 1 of a
+            # vector environment) holds world-frame poses of that spot: load it as the same file saved at the origin.
+            scene_frame_info = self._scene_file_in_scene_frame(scene_info)
+            if scene_frame_info is not None:
+                scene_info = self.scene_file = scene_frame_info
+
             # Verify the saved component versions are compatible with the currently-installed versions.
             # We require each saved version to be <= the currently-installed version.
             self._check_versions_compatible(scene_info.get("versions", {}))
@@ -1297,6 +1304,29 @@ class Scene(Serializable, Registerable, Recreatable, ABC):
             self._registry.load_state(state=registry_state, serialized=False)
         else:
             self._registry.load_state(state=state, serialized=False)
+
+    @staticmethod
+    def _scene_file_in_scene_frame(scene_info):
+        """Returns @scene_info as if it had been saved with its scene at the origin, or None if it was.
+
+        A saved state records where its scene sat (``state["pos"]`` / ``state["ori"]``, see ``_dump_state``), and its
+        object poses are world-frame poses of that spot. Here they are moved into the scene frame (the inverse of the
+        recorded scene pose, as ``_load_state`` rebases) and the recorded pose becomes the origin. A file saved at the
+        origin, as every single-scene file, is returned as None and loads unchanged. @scene_info is left untouched.
+        """
+        state = scene_info.get("state")
+        if not isinstance(state, dict) or "pos" not in state or "registry" not in state:
+            return None
+        rec_pos = th.as_tensor(state["pos"], dtype=th.float32).reshape(3)
+        rec_ori = th.as_tensor(state["ori"], dtype=th.float32).reshape(4)
+        if th.equal(rec_pos, th.zeros(3)) and th.equal(rec_ori, th.tensor([0.0, 0.0, 0.0, 1.0])):
+            return None
+        info = json.loads(json.dumps(scene_info, cls=TorchEncoder))
+        inv_pos, inv_ori = T.invert_pose_transform(rec_pos, rec_ori)
+        registry = Scene._rebase_registry_state_poses(info["state"]["registry"], inv_pos, inv_ori)
+        info["state"]["registry"] = json.loads(json.dumps(registry, cls=TorchEncoder))
+        info["state"]["pos"], info["state"]["ori"] = [0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]
+        return info
 
     @staticmethod
     def _rebase_registry_state_poses(registry_state, rel_pos, rel_ori):
