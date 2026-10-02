@@ -24,10 +24,48 @@ log.setLevel(logging.INFO)
 #: Opt-in (read when a dataset is set up): "1" adds observation.robot2cam_pose.<camera> for every RGB camera, as for a
 #: depth camera, so the poses stay in a dataset recorded without depth
 ROBOT2CAM_WITH_RGB_ENV = "OMNIGIBSON_LEROBOT_ROBOT2CAM_WITH_RGB"
+#: Opt-in: "<vcodec>,qp=<n>,preset=<p>" replaces the RGB camera encoder (e.g. "hevc_nvenc,qp=33,preset=p7"); GOP 8, yuv420p
+#: and no B-frames as the default encoder
+RGB_ENCODER_ENV = "OMNIGIBSON_LEROBOT_RGB_ENCODER"
 
 
 def _robot2cam_with_rgb() -> bool:
     return os.environ.get(ROBOT2CAM_WITH_RGB_ENV) == "1"
+
+
+class _StrOptionsEncoderConfig(VideoEncoderConfig):
+    """lerobot's NVENC options carry ``rc`` as an int even ``as_strings``, which PyAV's encoder setup rejects."""
+
+    def get_codec_options(self, encoder_threads=None, as_strings=False):
+        opts = super().get_codec_options(encoder_threads, as_strings)
+        return {k: str(v) for k, v in opts.items()} if as_strings else opts
+
+
+def _camera_encoder() -> VideoEncoderConfig:
+    spec = os.environ.get(RGB_ENCODER_ENV, "")
+    if not spec:
+        return VideoEncoderConfig(
+            vcodec="hevc",
+            pix_fmt="yuv420p",
+            g=8,
+            crf=30,
+            extra_options={"x265-params": "log-level=0:bframes=0"},
+        )
+    vcodec, *fields = [s.strip() for s in spec.split(",") if s.strip()]
+    kv = dict(f.split("=", 1) for f in fields)
+    qp = kv.get("qp")
+    preset = kv.get("preset")
+    if preset is not None and preset.startswith("p") and preset[1:].isdigit():
+        # NVENC's p1..p7 are 12..18 in its preset enum (lerobot checks the option as a number)
+        preset = 11 + int(preset[1:])
+    return _StrOptionsEncoderConfig(
+        vcodec=vcodec,
+        pix_fmt="yuv420p",
+        g=8,
+        crf=int(qp) if qp is not None else None,
+        preset=int(preset) if preset is not None else None,
+        extra_options={"bf": 0},
+    )
 
 
 def _robot2cam_name(key: str) -> str:
@@ -104,13 +142,7 @@ class LeRobotDataWrapper(DataWrapper):
             "robot_type": env.scene.robots[0].__class__.__name__.lower() if robot_type is None else robot_type,
             "use_videos": True,
             "streaming_encoding": True,
-            "camera_encoder": VideoEncoderConfig(
-                vcodec="hevc",
-                pix_fmt="yuv420p",
-                g=8,
-                crf=30,
-                extra_options={"x265-params": "log-level=0:bframes=0"},
-            ),
+            "camera_encoder": _camera_encoder(),
             "depth_encoder": DepthEncoderConfig(
                 vcodec="hevc",
                 pix_fmt="gray12le",
