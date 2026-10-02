@@ -21,6 +21,21 @@ from omnigibson.tasks.behavior_task import BehaviorTask
 log = create_module_logger(module_name=__name__)
 log.setLevel(logging.INFO)
 
+#: Opt-in (read when a dataset is set up): "1" adds observation.robot2cam_pose.<camera> for every RGB camera, as for a
+#: depth camera, so the poses stay in a dataset recorded without depth
+ROBOT2CAM_WITH_RGB_ENV = "OMNIGIBSON_LEROBOT_ROBOT2CAM_WITH_RGB"
+
+
+def _robot2cam_with_rgb() -> bool:
+    return os.environ.get(ROBOT2CAM_WITH_RGB_ENV) == "1"
+
+
+def _robot2cam_name(key: str) -> str:
+    obs_name_strs = key.split("::")[-2].split(":")
+    if len(obs_name_strs) == 4:
+        obs_name_strs = obs_name_strs[1:]
+    return f"observation.robot2cam_pose.{'_'.join(obs_name_strs).lower()}"
+
 
 class LeRobotDataWrapper(DataWrapper):
     """
@@ -161,6 +176,13 @@ class LeRobotDataWrapper(DataWrapper):
                 info["shape"] = gym_shape.shape[:-1] + (3,)
                 info["names"] = ["height", "width", "channel"]
                 info["info"] = {"is_depth_map": False}
+                tf_name = f"observation.robot2cam_pose.{obs_name}"
+                if _robot2cam_with_rgb() and tf_name not in obs_features:
+                    obs_features[tf_name] = {
+                        "dtype": "float32",
+                        "shape": (7,),
+                        "names": None,
+                    }
             elif "depth" in modality:
                 info["dtype"] = "video"
                 info["shape"] = gym_shape.shape + (1,)
@@ -215,11 +237,16 @@ class LeRobotDataWrapper(DataWrapper):
 
         # Compose lerobot format obs
         frame = dict()
+        with_rgb = _robot2cam_with_rgb()
         for name in self.env.observation_space.keys():
             cur_obs = obs[name]
             # Prune alpha channel if keeping RGB
             if "rgb" in name:
                 cur_obs = cur_obs[..., :3]
+                if with_rgb:
+                    tf_name = _robot2cam_name(name)
+                    if tf_name not in frame:
+                        frame[tf_name] = obs[f"{name.split('::')[-2]}::rel_pose"]
             elif "depth" in name:
                 # Add channel dim at the end
                 cur_obs = cur_obs.unsqueeze(-1)
