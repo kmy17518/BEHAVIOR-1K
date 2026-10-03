@@ -2054,6 +2054,7 @@ class Robot(USDObject, GymObservable):
         """
         assert self.is_manipulation
         arm = self.default_arm if arm == "default" else arm
+        released = self._ag_obj_in_hand[arm]
 
         # Remove joint and filtered collision restraints
         delete_or_deactivate_prim(self._ag_obj_constraints[arm].GetPath().pathString)
@@ -2061,6 +2062,10 @@ class Robot(USDObject, GymObservable):
         self._ag_obj_constraints[arm] = None
         self._ag_obj_constraint_params[arm] = None
         self._ag_release_counter[arm] = 0
+        # The constraint held the object static, so PhysX may have put it to sleep while held; asleep, it would stay
+        # where the hand let go instead of falling onto its support
+        if released is not None and hasattr(released, "wake"):
+            released.wake()
 
     def release_grasp_immediately(self, arm="default"):
         """
