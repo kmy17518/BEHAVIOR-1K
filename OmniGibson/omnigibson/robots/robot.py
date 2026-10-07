@@ -2576,6 +2576,9 @@ class Robot(USDObject, GymObservable):
         Check whether an object @obj can be grasped. If so, return the joint type to use for assisted grasping.
         Otherwise, return None.
 
+        A non-fixed link (one behind a movable joint: a lid, a door leaf) gets self.ag_moving_link_joint_type when the
+        task sets it ("FixedJoint" or "SphericalJoint"), else a SphericalJoint.
+
         Args:
             target_obj (USDObject): Object targeted for an assisted grasp
             target_link_name (str): Name of the link of the object to be grasped
@@ -2597,7 +2600,13 @@ class Robot(USDObject, GymObservable):
         for edge in nx.edge_dfs(target_obj.articulation_tree, target_link_name, orientation="reverse"):
             joint = target_obj.articulation_tree.edges[edge[:2]]
             if joint["joint_type"] != JointType.JOINT_FIXED:
-                joint_type = "SphericalJoint"
+                # A spherical joint couples position only: the hand turns without turning the link, so a handle grasp
+                # cannot turn a lid on a short lever. A task may require a fixed one (self.ag_moving_link_joint_type)
+                joint_type = getattr(self, "ag_moving_link_joint_type", None) or "SphericalJoint"
+                if joint_type not in ("FixedJoint", "SphericalJoint"):
+                    raise ValueError(
+                        f"ag_moving_link_joint_type must be FixedJoint or SphericalJoint, got {joint_type!r}"
+                    )
                 break
 
         return joint_type
