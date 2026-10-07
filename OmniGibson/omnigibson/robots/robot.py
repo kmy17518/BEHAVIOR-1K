@@ -2062,6 +2062,11 @@ class Robot(USDObject, GymObservable):
         self._ag_obj_constraints[arm] = None
         self._ag_obj_constraint_params[arm] = None
         self._ag_release_counter[arm] = 0
+        # Callables (robot, arm, obj) in self.release_callbacks act in the same instant, before the step's physics (a task
+        # can join a part let go aligned with its partner here, instead of after a step of free fall)
+        if released is not None:
+            for callback in list(getattr(self, "release_callbacks", None) or ()):
+                callback(self, arm, released)
         # The constraint held the object static, so PhysX may have put it to sleep while held; asleep, it would stay
         # where the hand let go instead of falling onto its support
         if released is not None and hasattr(released, "wake"):
