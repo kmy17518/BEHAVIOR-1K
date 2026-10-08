@@ -2054,6 +2054,7 @@ class Robot(USDObject, GymObservable):
         """
         assert self.is_manipulation
         arm = self.default_arm if arm == "default" else arm
+        released = self._ag_obj_in_hand[arm]
 
         # Remove joint and filtered collision restraints
         delete_or_deactivate_prim(self._ag_obj_constraints[arm].GetPath().pathString)
@@ -2061,6 +2062,15 @@ class Robot(USDObject, GymObservable):
         self._ag_obj_constraints[arm] = None
         self._ag_obj_constraint_params[arm] = None
         self._ag_release_counter[arm] = 0
+        # Callables (robot, arm, obj) in self.release_callbacks act in the same instant, before the step's physics (a task
+        # can join a part let go aligned with its partner here, instead of after a step of free fall)
+        if released is not None:
+            for callback in list(getattr(self, "release_callbacks", None) or ()):
+                callback(self, arm, released)
+        # The constraint held the object static, so PhysX may have put it to sleep while held; asleep, it would stay
+        # where the hand let go instead of falling onto its support
+        if released is not None and hasattr(released, "wake"):
+            released.wake()
 
     def release_grasp_immediately(self, arm="default"):
         """
@@ -2566,6 +2576,9 @@ class Robot(USDObject, GymObservable):
         Check whether an object @obj can be grasped. If so, return the joint type to use for assisted grasping.
         Otherwise, return None.
 
+        A non-fixed link (one behind a movable joint: a lid, a door leaf) gets self.ag_moving_link_joint_type when the
+        task sets it ("FixedJoint" or "SphericalJoint"), else a SphericalJoint.
+
         Args:
             target_obj (USDObject): Object targeted for an assisted grasp
             target_link_name (str): Name of the link of the object to be grasped
@@ -2587,7 +2600,13 @@ class Robot(USDObject, GymObservable):
         for edge in nx.edge_dfs(target_obj.articulation_tree, target_link_name, orientation="reverse"):
             joint = target_obj.articulation_tree.edges[edge[:2]]
             if joint["joint_type"] != JointType.JOINT_FIXED:
-                joint_type = "SphericalJoint"
+                # A spherical joint couples position only: the hand turns without turning the link, so a handle grasp
+                # cannot turn a lid on a short lever. A task may require a fixed one (self.ag_moving_link_joint_type)
+                joint_type = getattr(self, "ag_moving_link_joint_type", None) or "SphericalJoint"
+                if joint_type not in ("FixedJoint", "SphericalJoint"):
+                    raise ValueError(
+                        f"ag_moving_link_joint_type must be FixedJoint or SphericalJoint, got {joint_type!r}"
+                    )
                 break
 
         return joint_type
