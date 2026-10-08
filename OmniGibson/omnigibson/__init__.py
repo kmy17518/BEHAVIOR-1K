@@ -147,6 +147,10 @@ def cleanup(*args, **kwargs):
         shutil.rmtree(tempdir)
     except PermissionError:
         log.info("Permission error when removing temp files. Ignoring")
+    except OSError as e:
+        # a temp file Kit is still writing ("Directory not empty"): left behind, as the exception would otherwise abort the
+        # shutdown and the interpreter's teardown then segfaults
+        log.info(f"Temp files not fully removed ({e}). Ignoring")
     from omnigibson.simulator import logo_small
 
     log.info(f"{'-' * 10} Shutting Down {logo_small()} {'-' * 10}")
