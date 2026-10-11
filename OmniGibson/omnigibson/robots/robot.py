@@ -100,6 +100,27 @@ GraspingPoint = namedtuple("GraspingPoint", ["link_name", "position"])  # link_n
 _AG_MAGIC = 1e8 + 123456
 # Floats of payload per grasping arm (after the magic + arm_idx): [obj_uuid, link_idx, parent_pos(3), parent_orn(4), child_pos(3), child_orn(4), joint_type]
 _AG_STATE_SIZE = 17
+# Sentinel of a pending pad-clear release block ([magic, arm_idx, physics steps since the control stopped applying grasp]),
+# written only while such a release is pending (Robot._ag_keep_weld); same constraints as _AG_MAGIC
+_AG_PENDING_MAGIC = 1e8 + 654320
+
+
+def _serialize_ag_release_pending(arm_names, pending):
+    """The serialized blocks of the pending pad-clear releases in @pending (arm -> steps; arms without one are omitted)."""
+    return [
+        th.tensor([_AG_PENDING_MAGIC, float(arm_idx), float(pending[arm])])
+        for arm_idx, arm in enumerate(arm_names)
+        if pending.get(arm) is not None
+    ]
+
+
+def _deserialize_ag_release_pending(arm_names, state, idx):
+    """The pending pad-clear releases serialized at @state[@idx:]: (arm -> steps, index after the blocks)."""
+    pending = {}
+    while idx < len(state) and state[idx].item() == _AG_PENDING_MAGIC:
+        pending[arm_names[int(state[idx + 1].item())]] = int(state[idx + 2].item())
+        idx += 3
+    return pending, idx
 
 
 class Robot(USDObject, GymObservable):
@@ -247,6 +268,10 @@ class Robot(USDObject, GymObservable):
             }  # Opaque args for create_joint. Don't inspect.
             self._ag_release_counter = {arm: None for arm in self.arm_names}
             self._ag_grasp_counter = {arm: None for arm in self.arm_names}
+            # Pad-clear release (self.ag_release_on_pad_clear, _ag_keep_weld): physics steps since the control stopped
+            # applying grasp while the weld is kept, per arm (None: no release pending); each delayed release is logged
+            self._ag_release_pending = {arm: None for arm in self.arm_names}
+            self.ag_release_log = []
 
         can_be_floating = self.is_locomotion and not self.is_holonomic_base
         if not fixed_base and not can_be_floating:
@@ -866,7 +891,11 @@ class Robot(USDObject, GymObservable):
                     self._handle_release_window(arm=arm)
                 else:
                     if not applying_grasp:
-                        self._release_grasp(arm=arm)
+                        if not self._ag_keep_weld(arm=arm):
+                            self._release_grasp(arm=arm)
+                    elif self._ag_release_pending[arm] is not None:
+                        # The control applies grasp again before the pads cleared the object: the weld simply stays
+                        self._ag_release_pending[arm] = None
             elif applying_grasp:
                 ag_target_object_and_link_name = self._calculate_in_hand_object(arm=arm)
                 if self._ag_grasp_counter[arm] is not None:
@@ -1011,6 +1040,7 @@ class Robot(USDObject, GymObservable):
                     state["ag_obj_constraint_params"][arm]["target_obj"] = state["ag_obj_constraint_params"][arm][
                         "target_obj"
                     ].name
+            self._dump_ag_release_pending(state)
 
         return state
 
@@ -1120,6 +1150,9 @@ class Robot(USDObject, GymObservable):
                 if loaded_ag_constraint is not None and (current_ag_constraint is None or should_release):
                     self._create_assisted_grasp_joint(arm, loaded_ag_constraint)
 
+            # after the weld above was restored
+            self._load_ag_release_pending(state)
+
     def serialize(self, state):
         # Run super first
         state_flat = super().serialize(state=state)
@@ -1165,6 +1198,9 @@ class Robot(USDObject, GymObservable):
                 )
             if ag_parts:
                 state_flat = th.cat([state_flat] + ag_parts)
+            pending_parts = _serialize_ag_release_pending(self.arm_names, state.get("ag_release_pending") or {})
+            if pending_parts:
+                state_flat = th.cat([state_flat] + pending_parts)
 
         return state_flat
 
@@ -1205,6 +1241,9 @@ class Robot(USDObject, GymObservable):
                     "child_frame_orn": arm_data[12:16].clone(),
                     "joint_type": "SphericalJoint" if bool(arm_data[16].item()) else "FixedJoint",
                 }
+            pending, idx = _deserialize_ag_release_pending(self.arm_names, state, idx)
+            if pending:
+                state_dict["ag_release_pending"] = pending
 
         return state_dict, idx
 
@@ -2044,6 +2083,68 @@ class Robot(USDObject, GymObservable):
 
         return contact_data, robot_contact_links
 
+    def _dump_ag_release_pending(self, state):
+        """A pending pad-clear release (_ag_keep_weld) travels with the state, under "ag_release_pending" (arm -> physics
+        steps); the key is absent when none is pending, so a stock state is unchanged."""
+        pending = {arm: steps for arm, steps in self._ag_release_pending.items() if steps is not None}
+        if pending:
+            state["ag_release_pending"] = pending
+
+    def _load_ag_release_pending(self, state):
+        """Restore the pending pad-clear releases of @state; a state without one cancels any release pending here."""
+        pending = state.get("ag_release_pending") or {}
+        for arm in self.arm_names:
+            self._ag_release_pending[arm] = None if pending.get(arm) is None else int(pending[arm])
+
+    def _ag_keep_weld(self, arm="default"):
+        """
+        Whether the assisted-grasp weld of @arm outlives this physics step although its control no longer applies grasp.
+
+        With self.ag_release_on_pad_clear set (off by default: False, the stock release in this step), the weld stays while
+        _calculate_in_hand_object still finds the held object between both pads, at most self.ag_release_max_delay_s
+        (default 0.2 s): the object is let go once the opening pads have left it. Released at the open command itself, the
+        pads still clamp it (a position target inside the object saturates both drives), and their uneven release and
+        sliding off act on a free object. Each delayed release is appended to self.ag_release_log ({"arm", "object",
+        "by": "pads_clear" | "cap", "delay_steps", "delay_s"}).
+
+        Args:
+            arm (str): specific arm whose release is decided.
+                Default is "default" which corresponds to the first entry in self.arm_names
+
+        Returns:
+            bool: True to keep the weld this step
+        """
+        if not getattr(self, "ag_release_on_pad_clear", False):
+            return False
+        arm = self.default_arm if arm == "default" else arm
+        steps = self._ag_release_pending[arm]
+        steps = 0 if steps is None else steps + 1
+        dt = og.sim.get_physics_dt()
+        obj = self._ag_obj_in_hand[arm]
+        by = None
+        if steps * dt >= float(getattr(self, "ag_release_max_delay_s", 0.2)):
+            by = "cap"
+        else:
+            hit = self._calculate_in_hand_object(arm=arm)
+            if hit is None or hit[0] is not obj:
+                by = "pads_clear"
+        if by is None:
+            self._ag_release_pending[arm] = steps
+            return True
+        self._ag_release_pending[arm] = None
+        release_log = getattr(self, "ag_release_log", None)
+        if release_log is not None:
+            release_log.append(
+                {
+                    "arm": arm,
+                    "object": getattr(obj, "name", None),
+                    "by": by,
+                    "delay_steps": steps,
+                    "delay_s": steps * dt,
+                }
+            )
+        return False
+
     def _release_grasp(self, arm="default"):
         """
         Magic action to release this robot's grasp on an object
@@ -2062,6 +2163,7 @@ class Robot(USDObject, GymObservable):
         self._ag_obj_constraints[arm] = None
         self._ag_obj_constraint_params[arm] = None
         self._ag_release_counter[arm] = 0
+        self._ag_release_pending[arm] = None
         # Callables (robot, arm, obj) in self.release_callbacks act in the same instant, before the step's physics (a task
         # can join a part let go aligned with its partner here, instead of after a step of free fall)
         if released is not None:
@@ -2076,6 +2178,7 @@ class Robot(USDObject, GymObservable):
         """
         Magic action to release this robot's grasp for one arm.
         As opposed to @_release_grasp, this method would bypass the release window mechanism and immediately release.
+        It also bypasses a pad-clear delay (_ag_keep_weld).
         """
         assert self.is_manipulation
         if self._ag_obj_constraints[arm] is not None:
