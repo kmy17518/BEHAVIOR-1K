@@ -2,6 +2,7 @@ from collections import OrderedDict
 from collections.abc import Iterable
 from copy import deepcopy
 import os
+from omnigibson.utils.isg_build_timer import build_timer as _isg_bt  # vec_next overlay: ISG_VEC_BUILD_TIMERS=1 prints the build phases
 
 import gymnasium as gym
 import torch as th
@@ -461,11 +462,16 @@ class Environment(gym.Env, GymObservable, Recreatable):
         self._load_variables()
 
         # Load the scene, robots, and task
-        self._load_scene()
-        self._load_objects()
-        self._load_robots()
-        self._load_task()
-        self._load_external_sensors()
+        with _isg_bt("env.load_scene"):
+            self._load_scene()
+        with _isg_bt("env.load_objects"):
+            self._load_objects()
+        with _isg_bt("env.load_robots"):
+            self._load_robots()
+        with _isg_bt("env.load_task"):
+            self._load_task()
+        with _isg_bt("env.load_external_sensors"):
+            self._load_external_sensors()
 
         # When running multiple envs with gm.ENABLE_TILED_RENDERING, batch all per-env robot cameras into a
         # single tiled render product so that one render pass serves every env. Must be created before play
@@ -478,23 +484,42 @@ class Environment(gym.Env, GymObservable, Recreatable):
         has_vision_sensors = any(
             isinstance(sensor, VisionSensor) for robot in self._scenes[0].robots for sensor in robot.sensors.values()
         )
-        if gm.ENABLE_TILED_RENDERING and self.num_envs > 1 and has_vision_sensors:
+        # vec-eval overlay (2026-10-29): the in-obs external sensors are offered to the tiled sensor too; whether anything is tiled
+        # (robot cameras by name / per clone, external cameras) is decided by ISG_VEC_TILED_GROUP inside TiledVisionSensor
+        ext_for_tiling = None
+        if self._external_sensors is not None:
+            ext_for_tiling = [{n: s for n, s in d.items() if self._external_sensors_include_in_obs.get(n, False)} for d in self._external_sensors]
+        if gm.ENABLE_TILED_RENDERING and self.num_envs > 1 and (has_vision_sensors or any(ext_for_tiling or [])):
             # Creating the tiled render product and attaching annotators edits the USD stage
             with og.sim.editing_usd():
-                self._tiled_sensor = TiledVisionSensor(envs=self._scenes)
+                self._tiled_sensor = TiledVisionSensor(envs=self._scenes, external_sensors=ext_for_tiling)
+            if self._tiled_sensor.num_products == 0:
+                self._tiled_sensor.remove()
+                self._tiled_sensor = None
 
         # Play and complete loading
-        og.sim.play()
+        with _isg_bt("env.final_play"):
+            og.sim.play()
+        # vec_next overlay (2026-10-31): the build's plays are over - ISG_PHYSX_REPLICATE never replicates a later play (the clones
+        # stop being copies of scene 0 once their instances are restored)
+        og.sim._isg_replicate_build = False
+        # vec_next overlay (2026-10-31): the persistent asset-geometry cache's new entries of this build (ISG_VEC_ASSET_CACHE_DIR)
+        from omnigibson.utils import isg_asset_cache as _isg_ac
+
+        _isg_ac.flush("build")
         # Run any additional task post-loading behavior
-        self.task.post_play_load(env=self)
+        with _isg_bt("env.task_post_play_load"):
+            self.task.post_play_load(env=self)
 
         # Save the state for objects from load_robots / load_objects / load_task
-        for scene in self._scenes:
-            scene.update_initial_file()
+        with _isg_bt("env.update_initial_file"):
+            for scene in self._scenes:
+                scene.update_initial_file()
 
         # Load the obs / action spaces
-        self.load_observation_space()
-        self._load_action_space()
+        with _isg_bt("env.spaces"):
+            self.load_observation_space()
+            self._load_action_space()
 
         # Build sensor registry for get_obs()
         self._build_sensor_registry()
@@ -504,14 +529,22 @@ class Environment(gym.Env, GymObservable, Recreatable):
         # leaves those unused products rendering every frame alongside the tiled product.
         keep_individual_render_products = os.getenv("OMNIGIBSON_KEEP_INDIVIDUAL_RENDER_PRODUCTS", "0") == "1"
         if self._tiled_sensor is not None and not keep_individual_render_products:
+            # vec-eval overlay (2026-10-29): only the sensors a tiled product serves are paused (with ISG_VEC_TILED_GROUP=clone the
+            # single-camera groups - the head - keep their per-camera products and render as before)
             with og.sim.editing_usd():
-                for sensors in self._robot_sensor_map.values():
-                    for sensor in sensors:
-                        if isinstance(sensor, VisionSensor):
+                for (rname, sensor_name), sensors in self._robot_sensor_map.items():
+                    for env_idx, sensor in enumerate(sensors):
+                        if isinstance(sensor, VisionSensor) and self._tiled_sensor.covers(rname, sensor_name, env_idx):
+                            sensor.viewer_visibility = False
+                            sensor.render_product.hydra_texture.updates_enabled = False
+                for sensor_name, sensors in self._ext_sensor_map.items():
+                    for env_idx, sensor in enumerate(sensors):
+                        if isinstance(sensor, VisionSensor) and self._tiled_sensor.covers("external", sensor_name, env_idx):
                             sensor.viewer_visibility = False
                             sensor.render_product.hydra_texture.updates_enabled = False
 
-        self.reset()
+        with _isg_bt("env.reset"):
+            self.reset()
 
         # Start the scene graph builders
         for builder, scene in zip(self._scene_graph_builders, self._scenes):
@@ -587,19 +620,13 @@ class Environment(gym.Env, GymObservable, Recreatable):
             for (rname, sensor_name), sensors in self._robot_sensor_map.items():
                 if rname != robot_name:
                     continue
-                if tiled_obs is not None and sensor_name in tiled_obs:
-                    # Vision sensors in multi-env mode: slice the per-env tile out of the batched buffer.
+                if tiled_obs is not None and self._tiled_sensor.covers_sensor(sensor_name):
+                    # Vision sensors in multi-env mode: slice the per-env tile out of the batched buffer (vec-eval overlay: through
+                    # the sensor's lookup, which serves both the per-name and the per-clone grouping).
                     # NOTE: segmentation modalities are raw (unremapped) Replicator IDs in this path, and the
                     # per-modality info dicts (e.g. seg ID mappings) are not available.
                     for i, env_idx in enumerate(env_indices):
-                        s_obs = dict()
-                        for modality in self._tiled_sensor.modalities[sensor_name]:
-                            data = tiled_obs[sensor_name][modality][env_idx]
-                            # Match the per-sensor observation space: single-channel modalities are (H, W)
-                            if data.shape[-1] == 1:
-                                data = data.squeeze(-1)
-                            s_obs[modality] = data
-                        all_obs[i][robot_name][sensor_name] = s_obs
+                        all_obs[i][robot_name][sensor_name] = self._tiled_sensor.slice(tiled_obs, robot_name, sensor_name, env_idx)
                         all_info[i][robot_name][sensor_name] = dict()
                     continue
                 for i, env_idx in enumerate(env_indices):
@@ -633,6 +660,12 @@ class Environment(gym.Env, GymObservable, Recreatable):
                 all_info[i]["external"] = {}
 
             for sensor_name, sensors in self._ext_sensor_map.items():
+                if tiled_obs is not None and self._tiled_sensor.covers_external(sensor_name):
+                    # vec-eval overlay (2026-10-29): the external cameras' tiled product (ISG_VEC_TILED_GROUP=...+external)
+                    for i, env_idx in enumerate(env_indices):
+                        all_obs[i]["external"][sensor_name] = self._tiled_sensor.slice(tiled_obs, "external", sensor_name, env_idx)
+                        all_info[i]["external"][sensor_name] = dict()
+                    continue
                 # TODO: Replace with a single batched tiled rendering call
                 for i, env_idx in enumerate(env_indices):
                     s_obs, s_info = sensors[env_idx].get_obs()

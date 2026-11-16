@@ -1,4 +1,5 @@
 import gymnasium as gym
+import os
 import numpy as np
 import torch as th
 
@@ -21,6 +22,10 @@ from omnigibson.utils.vision_utils import Remapper
 
 # Create module logger
 log = create_module_logger(module_name=__name__)
+
+
+#: vec-eval overlay: ISG_VEC_GPU_OBS_CHECK=1 bit-equality counters of the GPU RGB path against a host annotator on the same render product
+ISG_GPU_OBS_CHECK = {"frames": 0, "mismatch_frames": 0, "pixels": 0, "mismatch_pixels": 0}
 
 
 class VisionSensor(BaseSensor):
@@ -305,6 +310,26 @@ class VisionSensor(BaseSensor):
             reordered_modalities = self._modalities
 
         for modality in reordered_modalities:
+            if modality == "rgb" and os.environ.get("ISG_VEC_GPU_OBS", "0") == "1":
+                # vec-eval overlay (lever S2-gpu-obs): the annotator lives on cuda:0 - take its array where it is (a view of the
+                # annotator's buffer: cloned so the next render cannot overwrite what a consumer still holds)
+                raw = self._annotators[modality].get_data()
+                raw = raw["data"] if isinstance(raw, dict) else raw
+                gpu = lazy.warp.to_torch(raw).clone()
+                if os.environ.get("ISG_VEC_GPU_OBS_CHECK", "0") == "1" and getattr(self, "_isg_rgb_host_annotator", None) is not None:
+                    host = self._isg_rgb_host_annotator.get_data(device="cpu")
+                    host = host["data"] if isinstance(host, dict) else host
+                    host_t = th.from_numpy(host).to(gpu.device)
+                    ISG_GPU_OBS_CHECK["frames"] += 1
+                    ISG_GPU_OBS_CHECK["pixels"] += int(host_t.shape[0] * host_t.shape[1])
+                    if host_t.shape != gpu.shape or not th.equal(host_t, gpu):
+                        ISG_GPU_OBS_CHECK["mismatch_frames"] += 1
+                        if host_t.shape == gpu.shape:
+                            ISG_GPU_OBS_CHECK["mismatch_pixels"] += int((host_t != gpu).any(dim=-1).sum().item())
+                        else:
+                            ISG_GPU_OBS_CHECK["mismatch_pixels"] += int(host_t.shape[0] * host_t.shape[1])
+                obs[modality] = gpu
+                continue
             raw_obs = self._annotators[modality].get_data(device=og.sim.device)
 
             if modality == "pointcloud":
@@ -588,10 +613,22 @@ class VisionSensor(BaseSensor):
         """
         if self._annotators.get(modality, None) is None:
             with og.sim.editing_usd():
-                self._annotators[modality] = lazy.omni.replicator.core.AnnotatorRegistry.get_annotator(
-                    self.raw_sensor_types[modality]
-                )
-                self._annotators[modality].attach([self._render_product])
+                if modality == "rgb" and os.environ.get("ISG_VEC_GPU_OBS", "0") == "1":
+                    # iSpatialGym vec-eval overlay (2026-10-27, lever S2-gpu-obs): the RGB annotator keeps its output on the GPU
+                    # (no host copy per camera per step; TiledVisionSensor._create_annotators does the same); _get_obs returns a
+                    # torch cuda tensor. ISG_VEC_GPU_OBS_CHECK=1 adds a host annotator on the same render product and compares.
+                    self._annotators[modality] = lazy.omni.replicator.core.AnnotatorRegistry.get_annotator(
+                        self.raw_sensor_types[modality], device="cuda:0", do_array_copy=False
+                    )
+                    self._annotators[modality].attach([self._render_product])
+                    if os.environ.get("ISG_VEC_GPU_OBS_CHECK", "0") == "1":
+                        self._isg_rgb_host_annotator = lazy.omni.replicator.core.AnnotatorRegistry.get_annotator(self.raw_sensor_types[modality])
+                        self._isg_rgb_host_annotator.attach([self._render_product])
+                else:
+                    self._annotators[modality] = lazy.omni.replicator.core.AnnotatorRegistry.get_annotator(
+                        self.raw_sensor_types[modality]
+                    )
+                    self._annotators[modality].attach([self._render_product])
 
     def _remove_modality_from_backend(self, modality):
         """

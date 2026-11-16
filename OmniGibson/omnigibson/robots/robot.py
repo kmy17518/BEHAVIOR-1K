@@ -1355,18 +1355,124 @@ class Robot(USDObject, GymObservable):
             self._rigid_contact_view_col_path_to_idx = {}
             return
 
+        # iSpatialGym vec-eval overlay (2026-10-27): ISG_AG_CONTACT_DATA_PER_FINGER (default the stock 8) sizes the contact
+        # data buffer the grasp anchor is read from (_find_finger_contact_position gives up when a pair's start index lies
+        # beyond the buffer, which silently fails the grasp attempt and restarts the 0.3 s grasp window).
+        per_finger = int(os.environ.get("ISG_AG_CONTACT_DATA_PER_FINGER", "8") or 8)
+
+        # iSpatialGym vec-eval overlay (2026-10-27): ONE finger-contact view shared by every robot of the simulation
+        # (ISG_AG_SHARED_CONTACT_VIEW=0 restores the stock per-robot views). Isaac Sim 5.1's RigidContactView.get_contact_data
+        # hands the detailed contact data of a physics step to the FIRST view that reads it; every other view's read in that
+        # step returns zero contacts (measured 2026-10-27 with four robots grasping in the same substep: scene 0's view 5
+        # contacts, scenes 1-3's views 0; one grasp attempt per 0.3 s grasp window succeeded, in scene order, and the k-th
+        # robot's weld formed 0.3 s x k late - the whole multi-clone verification failure of the door). Repeated reads of the
+        # same view within a step do return the data, so a single view with every robot's fingers as filters serves them all.
+        if os.environ.get("ISG_AG_SHARED_CONTACT_VIEW", "1") == "1":
+            self._rigid_contact_view, self._rigid_contact_view_row_path_to_idx, self._rigid_contact_view_col_path_to_idx = self._isg_shared_finger_contact_view(per_finger)
+            return
+
         # Rows are dynamic rigid bodies in the robot's scene; columns are the robot's fingers.
         with suppress_omni_log(channels=["omni.physx.tensors.plugin"]):
             self._rigid_contact_view = og.sim.physics_sim_view.create_rigid_contact_view(
                 pattern=f"/World/scene_{self.scene.idx}/*/*",
                 filter_patterns=finger_paths,
-                max_contact_data_count=len(finger_paths) * 8,
+                max_contact_data_count=len(finger_paths) * per_finger,
             )
 
         row_paths = list(self._rigid_contact_view.sensor_paths)
         col_paths = list(getattr(self._rigid_contact_view, "filter_patterns", finger_paths))
         self._rigid_contact_view_row_path_to_idx = {path: i for i, path in enumerate(row_paths)}
         self._rigid_contact_view_col_path_to_idx = {path: i for i, path in enumerate(col_paths)}
+
+    # the shared finger-contact view (class state): the physics sim view it was built on, the finger set it covers, the view
+    # and its row / column lookups
+    _ISG_SHARED_FINGER_VIEW = {"sim_view": None, "fingers": None, "view": None, "rows": {}, "cols": {}}
+    # its contact data of the current physics step, read once for every robot (class state): the step key it belongs to,
+    # the row / column lookups of the view it was read from, and the get_contact_data tuple
+    _ISG_SHARED_CONTACT_CACHE = {"key": None, "rows": None, "cols": None, "data": None, "reads": 0, "hits": 0, "empty_fresh": 0}
+
+    @classmethod
+    def _isg_shared_contact_data(cls):
+        """The shared view's ``get_contact_data`` for the current physics step, read once and served to every robot.
+
+        Why a cache (measured 2026-10-27, cluster run ``ag3_n4grid_shared``): a weld creation inside a robot's ``post_step``
+        (``_establish_grasp`` -> ``create_joint`` -> ``og.sim.update_handles``) refreshes the physics sim view, so the shared view
+        is rebuilt in the middle of the step and the robots processed after it read a view that did not exist when the step's
+        contacts were captured - it returns zero contacts (a view only reports the steps completed after its creation), and
+        their grasp attempts fail for 0.3 s again. The first read of a step happens before any weld of that step can be
+        created (robot 0's first arm) and is kept for the whole step; a read that falls on a freshly rebuilt view is reported
+        (``empty_fresh``) and not cached, so the next robot re-reads. Returns ``(rows, cols, data)`` or None."""
+        shared = cls._ISG_SHARED_FINGER_VIEW
+        if shared["view"] is None:
+            return None
+        cache = cls._ISG_SHARED_CONTACT_CACHE
+        key = (int(og.sim.current_time_step_index), float(og.sim.current_time))
+        if cache["key"] == key and cache["data"] is not None:
+            cache["hits"] += 1
+            return cache["rows"], cache["cols"], cache["data"]
+        data = shared["view"].get_contact_data(dt=og.sim.get_physics_dt())
+        cache["reads"] += 1
+        counts = data[4]
+        if shared.get("built_key") == key and int(counts.sum()) == 0:
+            # read on a view rebuilt in this very step: nothing of this step is in it; serve it but do not keep it
+            cache["empty_fresh"] += 1
+            return shared["rows"], shared["cols"], data
+        cache.update({"key": key, "rows": shared["rows"], "cols": shared["cols"], "data": data})
+        return cache["rows"], cache["cols"], cache["data"]
+
+    @classmethod
+    def _isg_shared_finger_contact_view(cls, per_finger):
+        """The simulation-wide finger-contact view: rows = every dynamic rigid body under /World/scene_*, columns = the finger
+        links of every manipulation robot of every scene; rebuilt when the physics sim view or the finger set changed (the
+        first robot whose handles are refreshed after a sim-view refresh rebuilds it, the others reuse it)."""
+        fingers = []
+        for scene in og.sim.scenes:
+            for robot in scene.robots:
+                if getattr(robot, "is_manipulation", False):
+                    links = getattr(robot, "finger_links", None) or {}
+                    fingers.extend(link.prim_path for arm_links in links.values() for link in arm_links)
+        fingers = sorted(set(fingers))
+        shared = cls._ISG_SHARED_FINGER_VIEW
+        sim_view = og.sim.physics_sim_view
+        reasons = []
+        if shared["view"] is None:
+            reasons.append("none")
+        if shared["fingers"] != fingers:
+            reasons.append("fingers")
+        if shared["sim_view"] is not sim_view:
+            reasons.append(f"sim_view {id(shared['sim_view'])}->{id(sim_view)}")
+        if shared["view"] is not None and not reasons:
+            try:
+                if not shared["view"].check():
+                    reasons.append("invalid")
+            except Exception as e:  # noqa: BLE001
+                reasons.append(f"check {e!r}")
+        if reasons:
+            with suppress_omni_log(channels=["omni.physx.tensors.plugin"]):
+                view = sim_view.create_rigid_contact_view(
+                    pattern="/World/scene_*/*/*",
+                    filter_patterns=fingers,
+                    max_contact_data_count=max(1, len(fingers)) * per_finger,
+                )
+            row_paths = list(view.sensor_paths)
+            # the column order is the view's filter order (RigidContactView.filter_paths); the stock code assumes it equals
+            # the order the patterns were given in (exact paths, no wildcards) - checked here, a mismatch is printed
+            filter_paths = list(getattr(view, "filter_paths", None) or [])
+            if sorted(filter_paths) == fingers:
+                col_paths = filter_paths
+                if filter_paths != fingers:
+                    print(f"ISG_AG_SHARED_CONTACT_VIEW filter order differs from the pattern order: {filter_paths[:4]}... vs {fingers[:4]}...", flush=True)
+            else:
+                col_paths = fingers
+                if filter_paths:
+                    print(f"ISG_AG_SHARED_CONTACT_VIEW filter_paths ({len(filter_paths)}) are not the finger set ({len(fingers)}); pattern order used", flush=True)
+            shared.update({"sim_view": sim_view, "fingers": fingers, "view": view, "rows": {p: i for i, p in enumerate(row_paths)},
+                           "cols": {p: i for i, p in enumerate(col_paths)},
+                           "built_key": (int(og.sim.current_time_step_index), float(og.sim.current_time))})
+            print(f"ISG_AG_SHARED_CONTACT_VIEW built ({', '.join(reasons)}): {len(row_paths)} rows x {len(col_paths)} finger columns, "
+                  f"contact data {max(1, len(fingers)) * per_finger}, t={float(og.sim.current_time):.3f}, "
+                  f"cache reads/hits/empty_fresh {cls._ISG_SHARED_CONTACT_CACHE['reads']}/{cls._ISG_SHARED_CONTACT_CACHE['hits']}/{cls._ISG_SHARED_CONTACT_CACHE['empty_fresh']}", flush=True)
+        return shared["view"], shared["rows"], shared["cols"]
 
     def _find_finger_contact_position(self, arm, target_link_prim_path):
         """
@@ -1381,19 +1487,24 @@ class Robot(USDObject, GymObservable):
             None or th.Tensor: (3,) float tensor world-frame contact position, or None if no contact
                 exists between any finger and the target link.
         """
-        if self._rigid_contact_view is None:
-            return None
+        if os.environ.get("ISG_AG_SHARED_CONTACT_VIEW", "1") == "1" and self._ISG_SHARED_FINGER_VIEW["view"] is not None:
+            # overlay 2026-10-27: the one view every robot shares, read ONCE per physics step for all of them
+            data = self._isg_shared_contact_data()
+            if data is None:
+                return None
+            rows, cols, (forces, points, normals, separations, contact_counts, start_indices) = data
+        else:
+            view, rows, cols = self._rigid_contact_view, self._rigid_contact_view_row_path_to_idx, self._rigid_contact_view_col_path_to_idx
+            if view is None:
+                return None
+            forces, points, normals, separations, contact_counts, start_indices = view.get_contact_data(dt=og.sim.get_physics_dt())
 
-        row_idx = self._rigid_contact_view_row_path_to_idx.get(target_link_prim_path)
+        row_idx = rows.get(target_link_prim_path)
         if row_idx is None:
             return None
 
-        forces, points, normals, separations, contact_counts, start_indices = self._rigid_contact_view.get_contact_data(
-            dt=og.sim.get_physics_dt()
-        )
-
         for finger_link in self.finger_links[arm]:
-            col_idx = self._rigid_contact_view_col_path_to_idx.get(finger_link.prim_path)
+            col_idx = cols.get(finger_link.prim_path)
             if col_idx is None:
                 continue
             count = int(contact_counts[row_idx, col_idx])
@@ -3383,8 +3494,15 @@ class Robot(USDObject, GymObservable):
         raycast_startpoints = th.tile(start_and_end_points[:n_start_points], (n_end_points, 1))
         raycast_endpoints = th.repeat_interleave(start_and_end_points[n_start_points:], n_start_points, dim=0) + 1e-8
         ray_data = set()
+        # iSpatialGym vec-eval overlay (2026-10-27, co-located clones): the finger rays answer within this robot's own scene -
+        # with every clone at the origin the nearest surface along a finger ray is otherwise a twin object or a twin robot's
+        # finger from another clone (utils/scene_query_utils.py; a no-op unless ISG_SCENE_COLOCATED=1)
+        from omnigibson.utils.scene_query_utils import query_scene
+
         # Calculate raycasts from each start point to end point -- this is n_startpoints * n_endpoints total rays
-        for result in raytest_batch(raycast_startpoints, raycast_endpoints, only_closest=True):
+        with query_scene(self.scene):
+            results = raytest_batch(raycast_startpoints, raycast_endpoints, only_closest=True)
+        for result in results:
             if result["hit"]:
                 # filter out self body parts (we currently assume that the robot cannot grasp itself)
                 if self.prim_path not in result["rigidBody"]:
@@ -3638,11 +3756,50 @@ class Robot(USDObject, GymObservable):
         # Compute the contact position in world frame using this robot's own rigid contact view.
         target_link_prim_path = target_obj.links[target_link_name].prim_path
         contact_pos_world = self._find_finger_contact_position(arm, target_link_prim_path)
+        if os.environ.get("ISG_AG_TRACE", "") == "1":
+            # iSpatialGym vec-eval overlay (2026-10-27): why does a grasp attempt fail? (multi-clone verification diagnostics)
+            self._isg_ag_trace(arm, target_link_prim_path, contact_pos_world)
         if contact_pos_world is None:
             return
 
         # Establish the grasp
         self._establish_grasp(target_obj, target_link_name, arm, contact_pos_world, joint_type)
+
+    def _isg_ag_trace(self, arm, target_link_prim_path, contact_pos_world):
+        """One stdout line per grasp attempt: the robot's scene, the target link, whether a contact point was found, and the
+        contact view's bookkeeping for the (target link, finger) pairs - counts, start indices and the data buffer length -
+        so that a failure caused by a truncated contact-data buffer is visible (ISG_AG_TRACE=1)."""
+        try:
+            info = {"scene": getattr(self.scene, "idx", None), "arm": arm, "target": target_link_prim_path.rsplit("/", 2)[-2:],
+                    "found": contact_pos_world is not None, "t": round(float(og.sim.current_time), 4)}
+            view, rows, cols = self._rigid_contact_view, self._rigid_contact_view_row_path_to_idx, self._rigid_contact_view_col_path_to_idx
+            data = None
+            if os.environ.get("ISG_AG_SHARED_CONTACT_VIEW", "1") == "1" and self._ISG_SHARED_FINGER_VIEW["view"] is not None:
+                shared = self._ISG_SHARED_FINGER_VIEW
+                view = shared["view"]
+                got = self._isg_shared_contact_data()  # the same per-step data the grasp attempt used (a cache hit)
+                if got is not None:
+                    rows, cols, data = got
+                cache = self._ISG_SHARED_CONTACT_CACHE
+                info["cache"] = {"key": cache["key"], "reads": cache["reads"], "hits": cache["hits"], "empty_fresh": cache["empty_fresh"]}
+            info["view_id"] = id(view)
+            if view is not None:
+                row_idx = rows.get(target_link_prim_path)
+                forces, points, normals, separations, counts, starts = data if data is not None else view.get_contact_data(dt=og.sim.get_physics_dt())
+                info["buffer_len"] = int(len(points))
+                info["total_contacts_in_view"] = int(counts.sum())
+                info["row_found"] = row_idx is not None
+                if row_idx is not None:
+                    pairs = []
+                    for finger_link in self.finger_links[arm]:
+                        col_idx = cols.get(finger_link.prim_path)
+                        if col_idx is not None:
+                            pairs.append((finger_link.prim_path.rsplit("/", 1)[-1], int(counts[row_idx, col_idx]), int(starts[row_idx, col_idx])))
+                    info["finger_pairs(count,start)"] = pairs
+                    info["max_start_index_in_view"] = int(starts.max())
+            print(f"ISG_AG_TRACE {info}", flush=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"ISG_AG_TRACE error {e!r}", flush=True)
 
     def _establish_grasp(self, target_obj, target_link_name, arm, contact_pos_world, joint_type):
         """

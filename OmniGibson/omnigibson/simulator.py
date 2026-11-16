@@ -4,11 +4,13 @@ import json
 import logging
 import math
 import os
+from omnigibson.utils.isg_build_timer import build_timer as _isg_bt  # vec_next overlay: ISG_VEC_BUILD_TIMERS=1 prints the build phases
 import shutil
 import signal
 import socket
 import sys
 import tempfile
+import time
 import traceback
 from contextlib import nullcontext
 from pathlib import Path
@@ -929,21 +931,26 @@ def _launch_simulator(*args, **kwargs):
             for scene in scenes:
                 if scene.loaded:
                     raise ValueError("Scene is already loaded!")
-                self._last_scene_edge = scene.load(
-                    idx=len(self.scenes),
-                    last_scene_edge=self._last_scene_edge,
-                    initial_scene_prim_z_offset=m.INITIAL_SCENE_PRIM_Z_OFFSET,
-                    scene_margin=m.SCENE_MARGIN,
-                )
+                with _isg_bt(f"sim.scene_load[{len(self.scenes)}]"):
+                    self._last_scene_edge = scene.load(
+                        idx=len(self.scenes),
+                        last_scene_edge=self._last_scene_edge,
+                        initial_scene_prim_z_offset=m.INITIAL_SCENE_PRIM_Z_OFFSET,
+                        scene_margin=m.SCENE_MARGIN,
+                    )
                 # Load the scene.
                 self._scenes.append(scene)
 
-            self.play()
+            with _isg_bt("sim.import_play"):
+                self.play()
             for scene in scenes:
-                scene.initialize()
+                with _isg_bt(f"sim.scene_initialize[{scene.idx}]"):
+                    scene.initialize()
             # One step is needed for particle systems to work.
-            self.step()
-            self.stop()
+            with _isg_bt("sim.import_step"):
+                self.step()
+            with _isg_bt("sim.import_stop"):
+                self.stop()
 
             for scene in scenes:
                 log.info(f"Imported scene {scene.idx}.")
@@ -1419,11 +1426,16 @@ def _launch_simulator(*args, **kwargs):
                                     # is playing
                                     obj.states[state_type].update()
 
-                    for scene in self.scenes:
-                        for obj in scene.objects:
-                            # Only update visuals for objects that have been initialized so far
-                            if obj.initialized:
-                                obj.update_visuals()
+                    # iSpatialGym vec-eval overlay (2026-10-27, lever S2-lean): ISG_VEC_LEAN_STEP=1 skips the per-object visual-state
+                    # pass (texture changes of Burnt / Cooked / Frozen / Saturated / ToggledOn, steam and fire emitters): no ISG task
+                    # changes a visual state, the pass reads every such object's state value in Python on every step of every
+                    # scene, and it touches nothing the physics or the verdicts read. The single-env evaluator never sets the switch.
+                    if os.environ.get("ISG_VEC_LEAN_STEP", "0") != "1":
+                        for scene in self.scenes:
+                            for obj in scene.objects:
+                                # Only update visuals for objects that have been initialized so far
+                                if obj.initialized:
+                                    obj.update_visuals()
 
                 # Possibly run transition rule step
                 if gm.ENABLE_TRANSITION_RULES:
@@ -1446,20 +1458,30 @@ def _launch_simulator(*args, **kwargs):
                 # [omni.physx.plugin] Transformation change on non-root links is not supported.
                 channels = ["omni.usd", "omni.physicsschema.plugin", "omni.physx.plugin"]
 
+                replicated = self._isg_register_physx_replicator() if was_stopped else False
                 with suppress_omni_log(channels=channels):
                     self._in_sim_lifecycle += 1
                     try:
+                        _t_play = time.perf_counter()
                         self._sim_context.play()
+                        _isg_play_s = time.perf_counter() - _t_play
+                        if os.environ.get("ISG_VEC_BUILD_TIMERS", "0") == "1":
+                            print(f"ISG_VEC_BUILD_TIMER sim.play.sim_context_play {_isg_play_s:.2f}", flush=True)
+                        if replicated:
+                            self._isg_unregister_physx_replicator()
+                            print(f"ISG_PHYSX_REPLICATE play with scene_0 replicated to {len(self.scenes) - 1} scenes: {time.perf_counter() - _t_play:.2f} s", flush=True)
                     finally:
                         self._in_sim_lifecycle -= 1
 
                 # Take a render step -- this is needed so that certain (unknown, maybe omni internal state?) is populated
                 # correctly.
-                self.render()
+                with _isg_bt("sim.play.render"):
+                    self.render()
 
                 # Update all object handles, unless this is a play during initialization
                 if og.sim is not None:
-                    self.update_handles()
+                    with _isg_bt("sim.play.update_handles"):
+                        self.update_handles()
 
                 if was_stopped:
                     # We need to update controller mode because kp and kd were set to the original (incorrect) values when
@@ -1474,11 +1496,55 @@ def _launch_simulator(*args, **kwargs):
                             scene.transition_rule_api.refresh_all_rules()
 
                 # Additionally run non physics things
-                self._non_physics_step()
+                with _isg_bt("sim.play.non_physics_step"):
+                    self._non_physics_step()
 
             # Run all callbacks
-            for callback in self._callbacks_on_play.values():
-                callback()
+            with _isg_bt("sim.play.callbacks"):
+                for callback in self._callbacks_on_play.values():
+                    callback()
+
+        def _isg_register_physx_replicator(self):
+            """vec_next overlay (2026-10-31), ``ISG_PHYSX_REPLICATE=1`` (default off): Isaac Lab's physics replication for a multi-scene
+            build. The clones are identical copies of scene 0 at build time (same template, translated), so PhysX parses scene 0 once
+            and replicates its actors / articulations / joints into scene_1..N-1 instead of parsing every clone (the first-play parse
+            grows with N). Registered for the plays of the build only (``self._isg_replicate_build`` - the environment clears it after
+            its final build play): a later stop / play must not copy scene 0's per-episode edits onto the clones. Mirrors
+            ``isaacsim.core.cloner.Cloner.replicate_physics`` (the scene prims are excluded from the normal parse, the replicate call
+            parses the source). Returns True when a replicator was registered (unregistered right after the play)."""
+            if os.environ.get("ISG_PHYSX_REPLICATE", "0") != "1" or not getattr(self, "_isg_replicate_build", True):
+                return False
+            if len(self.scenes) < 2:
+                return False
+            paths = [scene.prim_path for scene in self.scenes]
+            from omni.physx import get_physx_replicator_interface
+            from pxr import UsdUtils
+
+            stage_id = UsdUtils.StageCache.Get().Insert(self.stage).ToLongInt()
+            src, n = paths[0], len(paths) - 1
+
+            def attach_fn(_stage_id):
+                return list(paths)
+
+            def attach_end_fn(_stage_id):
+                get_physx_replicator_interface().replicate(_stage_id, src, n, False, False)
+
+            def rename_fn(_replicate_path, index):
+                return paths[index + 1]
+
+            iface = get_physx_replicator_interface()
+            iface.register_replicator(stage_id, attach_fn, attach_end_fn, rename_fn)
+            self._isg_replicator_stage_id = stage_id
+            return True
+
+        def _isg_unregister_physx_replicator(self):
+            stage_id = getattr(self, "_isg_replicator_stage_id", None)
+            if stage_id is None:
+                return
+            from omni.physx import get_physx_replicator_interface
+
+            get_physx_replicator_interface().unregister_replicator(stage_id)
+            self._isg_replicator_stage_id = None
 
         def pause(self):
             if not self.is_paused():

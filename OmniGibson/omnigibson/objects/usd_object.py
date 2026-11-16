@@ -209,9 +209,54 @@ class USDObject(EntityPrim, Registerable, metaclass=ABCMeta):
         # Update init info for this
         self._init_info["args"]["name"] = self.name
 
+    # iSpatialGym vec-eval overlay (campaign vec_next, 2026-10-29, the prototype-once world build): the prepared USD of an asset
+    # and the load-config values its preparation derives are the same for every object made from the same asset with the same
+    # load arguments - in a multi-scene world that is every clone's copy of an object, and the prebuild + load of scene 0.
+    # Stock OmniGibson decrypts, hashes, rewrites and re-exports the asset on every call (N x 595 times for 8 clones of
+    # house_single_floor, the file-I/O term that made the world build linear in the clone count); here the first preparation
+    # is memoised per process (key = the asset path + every input _preapply_articulation_root reads) and later objects replay
+    # its side effects (scale, kinematic_only, the articulated__ prim-path prefix) and reference the same temp USD.
+    # ISG_VEC_PREPARE_CACHE=0 restores the stock behaviour.
+    _PREPARED_ASSETS = {}
+
+    def _prepare_cache_key(self):
+        def key_of(v):
+            if v is None:
+                return None
+            if isinstance(v, th.Tensor):
+                return tuple(float(x) for x in v.flatten().tolist())
+            if isinstance(v, (list, tuple)):
+                return tuple(float(x) for x in v)
+            return v
+        lc = self._load_config
+        return (type(self).__name__, self._usd_path, bool(self._encrypted), bool(self.fixed_base), key_of(lc.get("scale")),
+                key_of(lc.get("bounding_box")), lc.get("kinematic_only"), bool(lc.get("self_collisions", False)),
+                self._relative_prim_path.startswith("/controllable"))
+
     def _prepare_to_load(self):
         """Prepare to load the USD by decrypting, correcting paths, checking hashes, and
         pre-applying ArticulationRootAPI at the correct location."""
+        if os.environ.get("ISG_VEC_PREPARE_CACHE", "1") == "1":
+            key = self._prepare_cache_key()
+            hit = USDObject._PREPARED_ASSETS.get(key)
+            if hit is not None and os.path.exists(hit["usd_path"]):
+                if hit["scale"] is not None:
+                    self._load_config["scale"] = hit["scale"].clone()
+                self._load_config["kinematic_only"] = hit["kinematic_only"]
+                if hit["articulated"] and not self._relative_prim_path.startswith("/articulated__"):
+                    self._relative_prim_path = f"/articulated__{self.name}"
+                USDObject._PREPARED_ASSETS_HITS = getattr(USDObject, "_PREPARED_ASSETS_HITS", 0) + 1
+                return hit["usd_path"]
+            usd_path = self._prepare_to_load_stock()
+            scale = self._load_config.get("scale")
+            USDObject._PREPARED_ASSETS[key] = {"usd_path": usd_path, "scale": None if scale is None else th.as_tensor(scale).clone(),
+                                               "kinematic_only": self._load_config.get("kinematic_only"),
+                                               "articulated": self._relative_prim_path.startswith("/articulated__")}
+            return usd_path
+        return self._prepare_to_load_stock()
+
+    def _prepare_to_load_stock(self):
+        """The stock preparation: decrypt, correct paths, check hashes, pre-apply ArticulationRootAPI (see _prepare_to_load)."""
         usd_path = self._usd_path
 
         if self._encrypted:
@@ -437,12 +482,24 @@ class USDObject(EntityPrim, Registerable, metaclass=ABCMeta):
         self._visual_states = states_set & get_visual_states()
 
         # If we require visual updates, possibly create additional APIs
+        # iSpatialGym vec-eval overlay (campaign vec_next, 2026-10-31): a CLONE's steam / fire emitters (visual-only flow effects of the
+        # heat states) are created on first use - set_emitter_enabled(..., True) - instead of for every object of every clone at the first
+        # play (27 % of the build's _non_physics_step, py-spy apple N=4). Scene 0 keeps the stock eager path (the N=1 build unchanged).
+        # ISG_VEC_LAZY_EMITTERS=0 = stock everywhere.
+        self._isg_lazy_emitters = set()
+        lazy_emit = (os.environ.get("ISG_VEC_LAZY_EMITTERS", "1") == "1" and self.scene is not None and self.scene.idx > 0)
         if len(self._visual_states) > 0:
             if len(states_set & get_steam_states()) > 0:
-                self._create_emitter_apis(EmitterType.STEAM)
+                if lazy_emit:
+                    self._isg_lazy_emitters.add(EmitterType.STEAM)
+                else:
+                    self._create_emitter_apis(EmitterType.STEAM)
 
             if len(states_set & get_fire_states()) > 0:
-                self._create_emitter_apis(EmitterType.FIRE)
+                if lazy_emit:
+                    self._isg_lazy_emitters.add(EmitterType.FIRE)
+                else:
+                    self._create_emitter_apis(EmitterType.FIRE)
 
     def add_state(self, state):
         """
@@ -792,7 +849,12 @@ class USDObject(EntityPrim, Registerable, metaclass=ABCMeta):
             value (bool): Value to set
         """
         if emitter_type not in self._emitters:
-            return
+            if not (value and emitter_type in getattr(self, "_isg_lazy_emitters", ())):
+                return
+            self._isg_lazy_emitters.discard(emitter_type)
+            self._create_emitter_apis(emitter_type)  # the deferred creation (clones, ISG_VEC_LAZY_EMITTERS)
+            if emitter_type not in self._emitters:
+                return
         # If we're running fabric and the value is active, we need to manually update the pose in the USD
         # to ensure the rendering is updated properly at the correct pose
         # TODO(#2082): Verify if this is still needed.

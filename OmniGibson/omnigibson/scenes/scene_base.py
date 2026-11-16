@@ -1,6 +1,8 @@
 import contextlib
 import json
+import contextlib
 import os
+from omnigibson.utils.isg_build_timer import build_timer as _isg_bt  # vec_next overlay: ISG_VEC_BUILD_TIMERS=1 prints the build phases
 import shutil
 import tempfile
 from abc import ABC
@@ -53,6 +55,42 @@ REGISTERED_SCENES = dict()
 
 # Prebuilt USDs that are cached per scene file to speed things up.
 PREBUILT_USDS = dict()
+
+
+_LAZY_SYSTEM_NAMES = {}
+
+
+def _lazy_system_names(system_dir):
+    """The dataset's system names, listed once per process (vec_next overlay; see Scene._load_systems)."""
+    if system_dir not in _LAZY_SYSTEM_NAMES:
+        _LAZY_SYSTEM_NAMES[system_dir] = frozenset(get_all_system_names()) if os.path.exists(system_dir) else frozenset()
+    return _LAZY_SYSTEM_NAMES[system_dir]
+
+
+class _LazySystems(dict):
+    """``Scene.available_systems`` with the systems created on first access (vec_next overlay): a dict whose keys are every
+    system name from the start (``in`` / ``keys()`` / ``len`` behave as the stock dict) and whose values are created by
+    ``create_system_from_metadata`` the first time they are read; the cloth system is created eagerly as in stock."""
+
+    def __init__(self, system_names, cloth):
+        super().__init__({name: None for name in system_names})
+        super().__setitem__("cloth", cloth)
+
+    def __getitem__(self, name):
+        system = super().__getitem__(name)
+        if system is None:
+            system = create_system_from_metadata(system_name=name)
+            super().__setitem__(name, system)
+        return system
+
+    def get(self, name, default=None):
+        return self[name] if name in self else default
+
+    def values(self):
+        return [self[name] for name in list(self.keys())]
+
+    def items(self):
+        return [(name, self[name]) for name in list(self.keys())]
 
 
 class Scene(Serializable, Registerable, Recreatable, ABC):
@@ -334,6 +372,14 @@ class Scene(Serializable, Registerable, Recreatable, ABC):
     def _load_systems(self):
         system_dir = os.path.join(get_dataset_path("behavior-1k-assets"), "systems")
 
+        if os.environ.get("ISG_VEC_LAZY_SYSTEMS", "1") == "1":
+            # iSpatialGym vec-eval overlay (campaign vec_next, 2026-10-29, the prototype-once world build): stock OmniGibson
+            # instantiates every particle system of the dataset (996 metadata reads) for every scene of the world; here the
+            # names are listed once per process and a scene's system is created on first access (get_system / the
+            # ``in`` / ``keys()`` uses of available_systems see the full name set as before). ISG_VEC_LAZY_SYSTEMS=0 = stock.
+            self._available_systems = _LazySystems(system_names=_lazy_system_names(system_dir), cloth=Cloth(name="cloth"))
+            return
+
         available_systems = (
             {
                 system_name: create_system_from_metadata(system_name=system_name)
@@ -362,7 +408,8 @@ class Scene(Serializable, Registerable, Recreatable, ABC):
         if self.scene_file is not None:
             scene_prim_obj = og.sim.stage.GetPrimAtPath(scene_absolute_path)
             if not scene_prim_obj:
-                scene_prim_obj = add_asset_to_stage(asset_path=self.prebuild(), prim_path=scene_absolute_path)
+                with _isg_bt(f"scene[{self.idx}].prebuilt_usd"):
+                    scene_prim_obj = add_asset_to_stage(asset_path=self.prebuild(), prim_path=scene_absolute_path)
 
         # Store world prim and load the scene into the simulator
         self._scene_prim = XFormPrim(
@@ -374,7 +421,8 @@ class Scene(Serializable, Registerable, Recreatable, ABC):
             assert self._scene_prim.prim_path == scene_prim_obj.GetPath().pathString, "Scene prim path mismatch!"
 
         # Go through and load all systems.
-        self._load_systems()
+        with _isg_bt(f"scene[{self.idx}].systems"):
+            self._load_systems()
 
         # Create desired systems
         for system_name in self._init_systems:
@@ -389,7 +437,14 @@ class Scene(Serializable, Registerable, Recreatable, ABC):
         self._scene_prim.set_position_orientation(position=initial_scene_prim_pos)
 
         # Now load the objects with their own logic
-        with og.sim.adding_objects(objs=self._init_objs.values()):
+        # iSpatialGym vec-eval overlay (campaign vec_next, 2026-10-30): a clone's object loop runs inside one batched_usd_edits() scope -
+        # stock synchronises the whole stage to Fabric at the exit of every editing_usd() block (thousands per scene: every API apply,
+        # xform rewrite, attribute write), a cost that grows with the stage, i.e. with the clone count (42 % of an N=8 build). Scene 0
+        # keeps the stock per-edit sync (the single-env path unchanged; it also fills the mesh cache of prims/rigid_prim.py, so the
+        # clones never read world-frame extents from a stale Fabric). Reads inside the scope are self-consistent (xform round trips)
+        # or of prims synced before it (the scene prim). ISG_VEC_BATCH_USD_EDITS=0 restores stock.
+        batch = og.sim.batched_usd_edits() if (self.idx > 0 and os.environ.get("ISG_VEC_BATCH_USD_EDITS", "1") == "1") else contextlib.nullcontext()
+        with _isg_bt(f"scene[{self.idx}].add_objects"), batch, og.sim.adding_objects(objs=self._init_objs.values()):
             for obj_name, obj in self._init_objs.items():
                 # Import into the simulator
                 self.add_object(obj, _batched_call=True)
@@ -409,22 +464,105 @@ class Scene(Serializable, Registerable, Recreatable, ABC):
 
         # Position the scene prim based on the last scene's right edge
         # NOTE: for empty scenes (no objects), the computed AABB is degenerate, so we manually use a zero extent
-        if self.idx != 0:
+        #
+        # iSpatialGym vec-eval overlay (2026-10-23): ISG_SCENE_LIVE_AABB=1 measures the scene by its *live* objects only (root
+        # z > ISG_SCENE_LIVE_MIN_Z, default -20 m: the sampler parks removed objects ~100 m underground, 100+ m away, which
+        # stretched house_single_floor's box to ~190 x 160 m and pushed clone 6 past x = 1500 m, where float32 world
+        # coordinates resolve 0.1 mm and the xform round-trip assertions fail), and ISG_SCENE_GRID_COLS=k lays the clones out
+        # on a k-column grid (x by the live width + margin, y by the live depth + margin) instead of one line along +x.
+        # ISG_SCENE_GRID_CENTER=1 (2026-10-27, campaign vec_speed): the grid is centred on scene 0 instead of growing from it
+        # towards +x / +y - scene 0 stays at the origin (the N=1 reference's world), the clones take the cells around it nearest
+        # first (N=8 on a 3-column grid: the four edge cells, then three corners), so the farthest clone origin moves from
+        # (2 px, 2 py) to (px, py) (house_single_floor: 153 m -> 94 m at the 10 m margin) and every object stays within one
+        # float32 binade (|x|, |y| < 128 m): the lab's resting-contact creep of light free-standing objects appeared only at
+        # world coordinates >= 157 m (lab/notes.md, alignment slot-3 diagnostic).
+        live_aabb = os.environ.get("ISG_SCENE_LIVE_AABB", "") == "1"
+        grid_cols = int(os.environ.get("ISG_SCENE_GRID_COLS", "0") or 0)
+        grid_center = os.environ.get("ISG_SCENE_GRID_CENTER", "") == "1"
+        if live_aabb and len(self._init_objs) > 0:
+            aabb_min, aabb_max = self._isg_live_aabb(initial_scene_prim_pos)
+        else:
             aabb_min, aabb_max = lazy.omni.usd.get_context().compute_path_world_bounding_box(scene_absolute_path)
-            left_edge_to_center = 0.0 if len(self._init_objs) == 0 else -aabb_min[0]
-            scene_position = th.tensor([last_scene_edge + scene_margin + left_edge_to_center, 0, 0])
+            aabb_min, aabb_max = th.as_tensor(aabb_min, dtype=th.float64)[:3], th.as_tensor(aabb_max, dtype=th.float64)[:3]
+        explicit = os.environ.get("ISG_SCENE_OFFSETS", "").strip()  # vec_next: explicit per-scene offsets "x,y,z;x,y,z;..." (scene 1, 2, ...)
+        if self.idx != 0:
             identity_quat = th.tensor([0.0, 0.0, 0.0, 1.0])
-            self._scene_prim.set_position_orientation(position=scene_position, orientation=identity_quat)
-            if len(self._init_objs) == 0:
-                new_scene_edge = last_scene_edge + scene_margin
+            if explicit and len(self._init_objs) > 0:
+                # vec_next overlay (2026-10-30): explicit clone offsets for placement experiments (ISG_SCENE_OFFSETS); scene idx uses entry idx-1
+                offs = [[float(v) for v in e.split(",")] for e in explicit.split(";") if e.strip()]
+                o = offs[min(self.idx - 1, len(offs) - 1)]
+                scene_position = th.tensor([o[0], o[1], o[2] if len(o) > 2 else 0.0])
+                self._scene_prim.set_position_orientation(position=scene_position, orientation=identity_quat)
+                new_scene_edge = max(last_scene_edge, float(scene_position[0]) + float(aabb_max[0]))
+            elif grid_cols > 1 and len(self._init_objs) > 0:
+                # every clone is a copy of scene 0: its live box is scene 0's translated, so pitches from this clone's own box
+                # (measured at the temporary z offset; x / y unaffected) place the live regions on a non-overlapping grid
+                pitch_x = float(aabb_max[0] - aabb_min[0]) + scene_margin
+                pitch_y = float(aabb_max[1] - aabb_min[1]) + scene_margin
+                if grid_center:
+                    col, row = self._isg_centered_cell(self.idx, grid_cols)
+                else:
+                    col, row = self.idx % grid_cols, self.idx // grid_cols
+                scene_position = th.tensor([col * pitch_x, row * pitch_y, 0.0])
+                self._scene_prim.set_position_orientation(position=scene_position, orientation=identity_quat)
+                new_scene_edge = float(scene_position[0]) + float(aabb_max[0])
             else:
-                new_scene_edge = last_scene_edge + scene_margin + (aabb_max[0] - aabb_min[0])
+                left_edge_to_center = 0.0 if len(self._init_objs) == 0 else -float(aabb_min[0])
+                scene_position = th.tensor([last_scene_edge + scene_margin + left_edge_to_center, 0, 0])
+                self._scene_prim.set_position_orientation(position=scene_position, orientation=identity_quat)
+                if len(self._init_objs) == 0:
+                    new_scene_edge = last_scene_edge + scene_margin
+                else:
+                    new_scene_edge = last_scene_edge + scene_margin + float(aabb_max[0] - aabb_min[0])
         else:
             scene_position = th.zeros(3)
-            aabb_min, aabb_max = lazy.omni.usd.get_context().compute_path_world_bounding_box(scene_absolute_path)
-            new_scene_edge = 0.0 if len(self._init_objs) == 0 else aabb_max[0]
+            new_scene_edge = 0.0 if len(self._init_objs) == 0 else float(aabb_max[0])
+        # stdout (flushed): the per-clone progress of a long multi-scene build, for the fleet worker's stall watchdog
+        print(f"RUN_ISG_VEC_SCENE {self.idx} placed at {[round(float(v), 2) for v in scene_position]} (live_aabb={live_aabb}, grid_cols={grid_cols}, explicit={bool(explicit)}, "
+              f"grid_center={grid_center}, margin={float(scene_margin):.1f}, box x {float(aabb_min[0]):.1f}..{float(aabb_max[0]):.1f} "
+              f"y {float(aabb_min[1]):.1f}..{float(aabb_max[1]):.1f})", flush=True)
 
         return new_scene_edge, scene_position
+
+    @staticmethod
+    def _isg_centered_cell(idx, cols):
+        """Cell (col, row) of scene ``idx`` on a ``cols`` x ``cols`` grid centred on scene 0 (vec-eval overlay, ISG_SCENE_GRID_CENTER=1):
+        scene 0 is (0, 0); the other cells are taken nearest to the origin first (edge-adjacent cells before corners), so a
+        partially filled grid never uses a far cell while a near one is free. cols=3 -> offsets {-1, 0, 1}; cols=2 -> {0, -1}."""
+        if idx == 0:
+            return 0, 0
+        offs = list(range(-(cols // 2), cols - cols // 2))  # cols=3: [-1, 0, 1]; cols=2: [-1, 0]; cols=4: [-2, -1, 0, 1]
+        cells = [(c, r) for r in offs for c in offs if (c, r) != (0, 0)]
+        cells.sort(key=lambda cr: (cr[0] * cr[0] + cr[1] * cr[1], abs(cr[1]), abs(cr[0]), -cr[0], -cr[1]))
+        return cells[(idx - 1) % len(cells)]
+
+    def _isg_live_aabb(self, initial_scene_prim_pos):
+        """The world box of the scene's live objects (vec-eval overlay): the union of the USD world bounds of the objects whose
+        authored root position is above ISG_SCENE_LIVE_MIN_Z (default -20 m) - the parked ones underground are left out - plus a
+        margin for objects whose bounds could not be read."""
+        min_z = float(os.environ.get("ISG_SCENE_LIVE_MIN_Z", "-20"))
+        ctx = lazy.omni.usd.get_context()
+        lo = th.full((3,), float("inf"), dtype=th.float64)
+        hi = th.full((3,), float("-inf"), dtype=th.float64)
+        n = 0
+        for obj_name, obj in self._init_objs.items():
+            pos = self._init_state.get(obj_name, {}).get("root_link", {}).get("pos")
+            if pos is None or float(pos[2]) < min_z:
+                continue
+            try:
+                bmin, bmax = ctx.compute_path_world_bounding_box(obj.prim_path)
+                bmin, bmax = th.as_tensor(bmin, dtype=th.float64)[:3], th.as_tensor(bmax, dtype=th.float64)[:3]
+                if not (th.isfinite(bmin).all() and th.isfinite(bmax).all()):
+                    raise ValueError("degenerate bounds")
+            except Exception:  # noqa: BLE001
+                p = th.as_tensor(pos, dtype=th.float64) + th.as_tensor(initial_scene_prim_pos, dtype=th.float64)
+                bmin, bmax = p - 3.0, p + 3.0
+            lo, hi = th.minimum(lo, bmin), th.maximum(hi, bmax)
+            n += 1
+        if n == 0:
+            bmin, bmax = ctx.compute_path_world_bounding_box(f"/World/scene_{self.idx}")
+            return th.as_tensor(bmin, dtype=th.float64)[:3], th.as_tensor(bmax, dtype=th.float64)[:3]
+        return lo, hi
 
     def _load_metadata_from_scene_file(self):
         """
@@ -589,8 +727,10 @@ class Scene(Serializable, Registerable, Recreatable, ABC):
             # their particle poses in the SCENE frame (see BaseSystem._dump_state and
             # PhysxParticleInstancer._dump_state), so load_state below places each scene's particles
             # at that scene's own world offset.
-            self.load_state(init_state, serialized=False)
-        self._initial_file = self.save(as_dict=True)
+            with _isg_bt(f"scene[{self.idx}].init_load_state"):
+                self.load_state(init_state, serialized=False)
+        with _isg_bt(f"scene[{self.idx}].init_save"):
+            self._initial_file = self.save(as_dict=True)
 
     def _create_registry(self):
         """

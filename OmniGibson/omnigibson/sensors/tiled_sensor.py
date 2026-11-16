@@ -1,11 +1,12 @@
 import math
+import os
 import omnigibson as og
 import omnigibson.lazy as lazy
 import torch as th
 import warp as wp
 from omnigibson.sensors.vision_sensor import VisionSensor
 from omnigibson.utils.ui_utils import create_module_logger
-from typing import Any, Tuple, List
+from typing import Any, Dict, List, Optional, Tuple
 
 # Create module logger
 log = create_module_logger(module_name=__name__)
@@ -83,40 +84,106 @@ class TiledVisionSensor:
     # Registry of all created tiled sensors, used for cleanup on og.clear()
     TILED_SENSORS = []
 
-    def __init__(self, envs: List[Any], tile_all_sensors: bool = False) -> None:
+    def __init__(self, envs: List[Any], tile_all_sensors: bool = False, external_sensors: Optional[List[Dict[str, Any]]] = None) -> None:
         camera_prim_paths = dict()
         self.modalities = dict()
         self._camera_resolution = dict()
         self._camera_prims = dict()
         self._annotators = dict()
+        # iSpatialGym vec-eval overlay (2026-10-29): ISG_VEC_TILED_GROUP=clone groups the tiles **per env** instead of per camera name
+        # - one render product per env holding that env's equal-resolution, equal-modality robot cameras (the R1Pro's two 480^2
+        # wrists; a group of one camera stays on its per-camera product, so the 720^2 head is untouched). Reason: in a tiled
+        # product the screen-space / temporal post passes (DLSS, AO, denoisers) are computed with the product's single camera,
+        # and a tile's error grows with its camera's offset from that camera (0 at 0 m, -8..-12 % at 57 m, -25 % at 114 m,
+        # campaign vec_speed): cameras of one robot are within ~1 m of each other, cameras of different clones 50-150 m apart.
+        # "name" (the default) is the upstream behaviour. The lookup API (tile_of / covers / slice) serves both modes.
+        self.group_mode = os.environ.get("ISG_VEC_TILED_GROUP", "name")
+        self._tile_of = dict()  # (robot_name, sensor_name, env_idx) -> (group key, tile index)
+        self._tiled_sensor_names = set()  # sensor names served by a tiled product (every env)
+        self._tiled_external_names = set()  # external sensor names served by a tiled product (vec-eval overlay, 2026-10-29)
+        # modes: "name" | "clone" for the robot cameras, "+external" adds one product per external camera name across the envs
+        # (the video's over-the-shoulder view: no policy consumes it, so the non-primary tiles' post-processing error is cosmetic)
+        modes = {m.strip() for m in self.group_mode.split("+") if m.strip()}
+        unknown = modes - {"name", "clone", "external"}
+        assert not unknown, f"ISG_VEC_TILED_GROUP: unknown mode(s) {sorted(unknown)} in {self.group_mode!r}"
+        robot_mode = "clone" if "clone" in modes else ("name" if "name" in modes else None)
+        # ISG_VEC_TILED_SENSORS (2026-10-29): comma list of substrings; in "name" mode only robot sensors whose name contains one of
+        # them are tiled (e.g. "zed_link" = the head only -> a single tiled resolution in the session; the Replicator docstring's
+        # single-resolution note is tested with it). Empty = every vision sensor, as upstream.
+        only = [t for t in os.environ.get("ISG_VEC_TILED_SENSORS", "").split(",") if t.strip()]
 
         stage = lazy.omni.usd.get_context().get_stage()
-        for env in envs:
-            for robot in env.robots:
-                for sensor_name, sensor in robot.sensors.items():
-                    if tile_all_sensors:
-                        sensor_name = "sensor"
-                    if isinstance(sensor, VisionSensor):
-                        if sensor_name not in camera_prim_paths:
-                            camera_prim_paths[sensor_name] = []
-                            self.modalities[sensor_name] = sensor.modalities
-                            self._camera_resolution[sensor_name] = (sensor.image_width, sensor.image_height)
-                            self._camera_prims[sensor_name] = []
-                        assert (
-                            sensor.modalities == self.modalities[sensor_name]
-                        ), f"All sensors named {sensor_name} must have the same modalities!"
-                        assert self._camera_resolution[sensor_name] == (
-                            sensor.image_width,
-                            sensor.image_height,
-                        ), f"All sensors named {sensor_name} must have the same resolution!"
-                        camera_prim_paths[sensor_name].append(sensor.prim_path)
-                        camera_prim = stage.GetPrimAtPath(sensor.prim_path)
-                        self._camera_prims[sensor_name].append(lazy.pxr.UsdGeom.Camera(camera_prim))
+        if robot_mode == "clone":
+            # pass 1: per env, per robot, the vision sensors by (resolution, modalities); pass 2: groups with >= 2 cameras become products
+            for env_idx, env in enumerate(envs):
+                for robot in env.robots:
+                    buckets = dict()
+                    for sensor_name, sensor in robot.sensors.items():
+                        if isinstance(sensor, VisionSensor):
+                            buckets.setdefault(((sensor.image_width, sensor.image_height), tuple(sorted(sensor.modalities))), []).append((sensor_name, sensor))
+                    for (res, _mods), members in buckets.items():
+                        if len(members) < 2:
+                            continue
+                        key = f"env{env_idx}:{robot.name}:{res[0]}x{res[1]}"
+                        camera_prim_paths[key] = []
+                        self.modalities[key] = members[0][1].modalities
+                        self._camera_resolution[key] = res
+                        self._camera_prims[key] = []
+                        for tile_idx, (sensor_name, sensor) in enumerate(sorted(members, key=lambda m: m[0])):
+                            camera_prim_paths[key].append(sensor.prim_path)
+                            self._camera_prims[key].append(lazy.pxr.UsdGeom.Camera(stage.GetPrimAtPath(sensor.prim_path)))
+                            self._tile_of[(robot.name, sensor_name, env_idx)] = (key, tile_idx)
+                            self._tiled_sensor_names.add(sensor_name)
+            log.info(f"TiledVisionSensor (clone grouping): {len(camera_prim_paths)} products, sensors {sorted(self._tiled_sensor_names)}")
+        elif robot_mode == "name":
+            for env_idx, env in enumerate(envs):
+                for robot in env.robots:
+                    for sensor_name, sensor in robot.sensors.items():
+                        if only and not any(t in sensor_name for t in only):
+                            continue
+                        key = "sensor" if tile_all_sensors else sensor_name
+                        if isinstance(sensor, VisionSensor):
+                            if key not in camera_prim_paths:
+                                camera_prim_paths[key] = []
+                                self.modalities[key] = sensor.modalities
+                                self._camera_resolution[key] = (sensor.image_width, sensor.image_height)
+                                self._camera_prims[key] = []
+                            assert (
+                                sensor.modalities == self.modalities[key]
+                            ), f"All sensors named {key} must have the same modalities!"
+                            assert self._camera_resolution[key] == (
+                                sensor.image_width,
+                                sensor.image_height,
+                            ), f"All sensors named {key} must have the same resolution!"
+                            self._tile_of[(robot.name, sensor_name, env_idx)] = (key, len(camera_prim_paths[key]))
+                            self._tiled_sensor_names.add(sensor_name)
+                            camera_prim_paths[key].append(sensor.prim_path)
+                            camera_prim = stage.GetPrimAtPath(sensor.prim_path)
+                            self._camera_prims[key].append(lazy.pxr.UsdGeom.Camera(camera_prim))
+        if "external" in modes and external_sensors:
+            # one tiled product per external camera name across the envs (equal resolution / modalities required, as upstream)
+            for env_idx, sensors_of_env in enumerate(external_sensors):
+                for sensor_name, sensor in sensors_of_env.items():
+                    if not isinstance(sensor, VisionSensor):
+                        continue
+                    key = f"external:{sensor_name}"
+                    if key not in camera_prim_paths:
+                        camera_prim_paths[key] = []
+                        self.modalities[key] = sensor.modalities
+                        self._camera_resolution[key] = (sensor.image_width, sensor.image_height)
+                        self._camera_prims[key] = []
+                    assert sensor.modalities == self.modalities[key], f"All external sensors named {sensor_name} must have the same modalities!"
+                    assert self._camera_resolution[key] == (sensor.image_width, sensor.image_height), f"All external sensors named {sensor_name} must have the same resolution!"
+                    self._tile_of[("external", sensor_name, env_idx)] = (key, len(camera_prim_paths[key]))
+                    self._tiled_external_names.add(sensor_name)
+                    camera_prim_paths[key].append(sensor.prim_path)
+                    self._camera_prims[key].append(lazy.pxr.UsdGeom.Camera(stage.GetPrimAtPath(sensor.prim_path)))
+            log.info(f"TiledVisionSensor (external grouping): {sorted(self._tiled_external_names)} tiled across {len(external_sensors)} envs")
         self._render_product_paths = {
-            sensor_name: lazy.omni.replicator.core.create.render_product_tiled(
-                cameras=camera_prim_paths[sensor_name], tile_resolution=self._camera_resolution[sensor_name]
+            key: lazy.omni.replicator.core.create.render_product_tiled(
+                cameras=camera_prim_paths[key], tile_resolution=self._camera_resolution[key]
             )
-            for sensor_name in camera_prim_paths
+            for key in camera_prim_paths
         }
         self._create_annotators()
         # Attach the annotator to the render product
@@ -255,6 +322,36 @@ class TiledVisionSensor:
 
     def _camera_count(self, sensor_name: str) -> int:
         return len(self._camera_prims[sensor_name])
+
+    # -- lookup API (vec-eval overlay): where a robot sensor's tile lives, whatever the grouping mode --------------------
+    def covers(self, robot_name: str, sensor_name: str, env_idx: int) -> bool:
+        """Is this env's sensor served by a tiled product (else it keeps its per-camera product)?"""
+        return (robot_name, sensor_name, env_idx) in self._tile_of
+
+    def covers_sensor(self, sensor_name: str) -> bool:
+        return sensor_name in self._tiled_sensor_names
+
+    def covers_external(self, sensor_name: str) -> bool:
+        """Is this external (per-env, non-robot) sensor served by a tiled product? (slice with robot_name="external")"""
+        return sensor_name in self._tiled_external_names
+
+    @property
+    def num_products(self) -> int:
+        return len(self._render_product_paths)
+
+    def tile_of(self, robot_name: str, sensor_name: str, env_idx: int) -> Tuple[str, int]:
+        return self._tile_of[(robot_name, sensor_name, env_idx)]
+
+    def slice(self, tiled_obs, robot_name: str, sensor_name: str, env_idx: int):
+        """{modality: tensor} of one env's sensor out of the batched buffers of :meth:`get_obs` (single-channel modalities (H, W))."""
+        key, tile = self._tile_of[(robot_name, sensor_name, env_idx)]
+        out = dict()
+        for modality in self.modalities[key]:
+            data = tiled_obs[key][modality][tile]
+            if data.shape[-1] == 1:
+                data = data.squeeze(-1)
+            out[modality] = data
+        return out
 
     def _tiled_grid_shape(self, sensor_name: str) -> Tuple[int, int]:
         cols = math.ceil(math.sqrt(self._camera_count(sensor_name=sensor_name)))

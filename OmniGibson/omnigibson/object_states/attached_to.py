@@ -100,14 +100,24 @@ class AttachedTo(
         # Run super method
         super().__init__(obj=obj)
 
+    @property
+    def _stop_callback_name(self):
+        # the callback registry is one dict for the whole simulator: in a vectorized world the clones share their object names, so
+        # the name carries the object's scene index (iSpatialGym vec-eval overlay, 2026-10-23)
+        try:
+            scene_idx = self.obj.scene.idx
+        except Exception:  # noqa: BLE001  (no scene yet)
+            scene_idx = None
+        return f"{self.obj.name}_detach" if scene_idx is None else f"scene{scene_idx}_{self.obj.name}_detach"
+
     def initialize(self):
         super().initialize()
-        og.sim.add_callback_on_stop(name=f"{self.obj.name}_detach", callback=self._detach)
+        og.sim.add_callback_on_stop(name=self._stop_callback_name, callback=self._detach)
         self.parents_disabled_collisions = set()
 
     def remove(self):
         super().remove()
-        og.sim.remove_callback_on_stop(name=f"{self.obj.name}_detach")
+        og.sim.remove_callback_on_stop(name=self._stop_callback_name)
 
     @classproperty
     def meta_link_types(cls):
